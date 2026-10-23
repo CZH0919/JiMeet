@@ -114,6 +114,72 @@ PY
 
 能打印版本号即说明系统层与驱动层都通了，剩下的只是 Django 配置。
 
+#### 报 `FATAL: role "jimeet" does not exist`：补建角色
+
+这个报错发生在**认证之前**：PostgreSQL 先按连接参数里的 `user` 去查 `pg_roles`，查不到就直接 `FATAL`，根本没走到校验口令那一步。所以它只说明"角色没建"，和口令、`pg_hba.conf` 都无关。同理，库没建时报的是 `database "jimeet" does not exist`。
+
+**不要用 `-U postgres`**：Homebrew 的 `initdb` 只把当前 macOS 登录用户建成超级用户，`postgres` 这个角色通常不存在。下面的命令都不写 `-U`，以默认登录用户身份连 `postgres` 库执行。若 1.3 已经成功执行过，本节只需当作自查。
+
+**1）确认当前身份有建角色的权限，并查看现状**
+
+```bash
+psql -d postgres -c "SELECT current_user, rolsuper FROM pg_roles WHERE rolname = current_user;"
+psql -d postgres -c "\du"     # 现有角色
+psql -d postgres -c "\l"      # 现有数据库
+```
+
+`rolsuper` 必须为 `t`，否则没有建角色的权限。
+
+**2）幂等创建角色**（已存在则跳过，可重复执行）
+
+```bash
+psql -d postgres <<'SQL'
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'jimeet') THEN
+    CREATE ROLE jimeet LOGIN PASSWORD 'jimeet';
+  END IF;
+END
+$$;
+SQL
+```
+
+**3）创建数据库并指定 owner**
+
+```bash
+createdb -O jimeet jimeet
+```
+
+库已存在时 `createdb` 会报 `already exists`，跳过即可。owner 必须是 `jimeet`：PG 15 起 `public` schema 归 `pg_database_owner`，只有库 owner 才自动拥有写权限；库若由登录用户创建，`migrate` 会报 `permission denied for schema public`。已建错时可以补：
+
+```bash
+psql -d postgres -c "ALTER DATABASE jimeet OWNER TO jimeet;"
+# 或只补权限、不换 owner
+psql -d jimeet -c "GRANT ALL ON SCHEMA public TO jimeet;"
+```
+
+**4）验证**
+
+```bash
+PGPASSWORD=jimeet psql -h 127.0.0.1 -U jimeet -d jimeet -tAc "select current_user, current_database();"
+# 期望输出：jimeet|jimeet
+```
+
+也可以直接重跑本节开头的 psycopg 片段。完整的顺序检查见第 5 节。
+
+#### 连通性报错对照表
+
+| 报错 | 含义 | 处理 |
+|------|------|------|
+| `FATAL: role "jimeet" does not exist` | 角色未创建；或连到了另一个实例 | 按上面第 2 步创建；有多个实例时先核对 `host`、`port` |
+| `FATAL: password authentication failed for user "jimeet"` | 角色在，口令不符 | `psql -d postgres -c "ALTER ROLE jimeet PASSWORD 'jimeet';"` |
+| `FATAL: database "jimeet" does not exist` | 库未创建 | 第 3 步 `createdb -O jimeet jimeet` |
+| `permission denied for schema public` | 库 owner 不是 `jimeet` | 第 3 步的 `ALTER DATABASE ... OWNER TO` |
+| `connection ... port 5432 failed: Connection refused` | 服务未启动 | `brew services start postgresql@18` |
+| `psql: command not found` | keg-only 未加入 PATH | 见 1.1 |
+
+> 以上口令只用于本地开发。Ubuntu 上超级用户是 `postgres` 系统用户，需 `sudo -u postgres psql`，见 2.3。
+
 ---
 
 ## 2 Ubuntu（服务器）
