@@ -55,8 +55,8 @@ def make_application(recruitment, applicant, status="processing", **overrides):
         "recruitment": recruitment,
         "applicant": applicant,
         "status": status,
-        "resume_path": f"resumes/2026/01/{uuid.uuid4().hex}.pdf",
-        "resume_original_name": "resume.pdf",
+        "resume_file": f"resumes/2026/01/{uuid.uuid4().hex}.pdf",
+        "resume_name": "resume.pdf",
         "resume_size": 1024,
         "resume_type": "pdf",
     }

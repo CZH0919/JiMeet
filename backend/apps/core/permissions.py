@@ -1,4 +1,3 @@
-"""DRF 权限类。管理员只看 is_admin，不看 is_staff。"""
 from rest_framework.permissions import BasePermission
 
 from apps.core.errors import Forbidden, NotAuthenticated

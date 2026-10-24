@@ -1,4 +1,3 @@
-"""页码分页。分页由调用方显式触发，不走 DRF 全局分页。"""
 from apps.core.errors import ValidationFailed
 
 DEFAULT_PAGE = 1

@@ -12,6 +12,9 @@ class Migration(migrations.Migration):
 
     在 Django 内置认证迁移完成后，创建用户字段、组和权限关联，
     并配置用户管理器、邮箱唯一约束、角色约束及登录方式约束。
+
+    这里的迁移文件是由 Django 自动生成的，包含了对用户模型的字段定义、约束和索引等信息。
+    详细字段说明请参考 models.py 中的 User 模型定义。
     """
 
     initial = True

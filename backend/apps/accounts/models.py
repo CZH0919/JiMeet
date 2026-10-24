@@ -100,31 +100,25 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     """
-    用户模型
+    用户模型，对应 database.md 1.1 的 app_user 表。
 
-    这里和backend/file/design_manuscript/database.md是完全一致的
-    自增id不需要写，Django会自动创建一个自增id作为主键。
-    
-    包含的字段和解释如下：
-    | 字段名称 | 数据类型 | 约束 | 说明 |
-    |---------|---------|------|-----|
-    | id | BIGINT | PRIMARY KEY, 自增 | 数据库内的自增标识，不会对外公开 |
-    | uid | VARCHAR(32) | NOT NULL, UNIQUE | 对外使用的的uid，随机生成（`uuid4().hex`，恰好 32 位），防止被遍历爬取|
-    | real_id | VARCHAR(32) | NOT NULL, UNIQUE | 真实的学号/工号，内部使用，不对外公开|
-    | nickname | VARCHAR(32)  | NOT NULL | 可以自主定义的用户名 |
-    | name | VARCHAR(32)  | NOT NULL | 真实的姓名 |
-    | email | VARCHAR(254) | NOT NULL（必须是同济邮箱格式） | 邮箱号，用于登录预留与邮件通知 |
-    | role | VARCHAR(32)  | NOT NULL，CHECK (role IN ('student','teacher')) | 用户角色，只能是`student` 或 `teacher`，登录时依据学号/工号判定 |
-    | is_admin | BOOLEAN | NOT NULL，默认 FALSE | 是否拥有管理员权限 |
-    | is_active | BOOLEAN | NOT NULL，默认 TRUE | 是否启用 |
-    | password | VARCHAR(128) | NOT NULL DEFAULT '' | Django 哈希格式密码。“邮箱登录”预留；若只走统一身份认证则保持空串 |
-    | sso_subject | VARCHAR(191) | UNIQUE，可空 | 统一身份认证返回的稳定用户标识；与密码登录可并存 |
-    | email_notify_enabled | BOOLEAN | NOT NULL，默认 TRUE | 是否接收邮件通知（站内通知始终生成） |
-    | privacy_consented_at | TIMESTAMPTZ | 可空 | 确认个人信息处理告知的时间；为空时不允许提交申请（首次填写简历前须确认） |
-    | last_login | TIMESTAMPTZ | 可空 | Django 内置字段，由 `AbstractBaseUser` 提供 |
-    | created_at | TIMESTAMPTZ | NOT NULL | 注册时间、管理员/个人主页排序 |
-    | updated_at | TIMESTAMPTZ | NOT NULL | 个人资料最近修改时间 |
+    ### Attributes
+    - `uid` / `real_id`: 对外随机标识（uuid4().hex，32 位）与内部学号/工号，
+      均唯一，real_id 不对外公开
+    - `nickname` / `name`: 可自定义的昵称与真实姓名
+    - `email`: 同济邮箱，按小写唯一，用于登录预留与邮件通知
+    - `role`: 用户角色，只能是 student 或 teacher
+    - `is_admin` / `is_active`: 业务管理员标记与账号是否启用，业务权限只看 is_admin
+    - `password` / `sso_subject`: Django 哈希密码与统一身份认证稳定标识，
+      两者至少有一个可用
+    - `email_notify_enabled`: 是否接收邮件通知，站内通知始终生成
+    - `privacy_consented_at`: 确认个人信息处理告知的时间，为空时不允许提交申请
+    - `is_staff` / `is_superuser` / `groups` / `user_permissions`: 仅 Django Admin
+      访问权限，不代表业务权限
+    - `last_login` / `created_at` / `updated_at`: 登录时间、注册时间与资料最近修改时间
 
+    id 为 Django 自主生成的自增主键，不对外公开；邮箱唯一与登录方式由数据库约束保证，
+    访问权限由应用层校验。
     """
     uid = models.CharField(
         "对外标识", max_length=32, unique=True, default=_new_uid, editable=False
@@ -151,7 +145,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     objects = UserManager()
 
     USERNAME_FIELD = "real_id"
-    REQUIRED_FIELDS = ["name", "email"]
+    REQUIRED_FIELDS = ["name", "email", "nickname"]
 
     class Meta:
         db_table = "app_user"

@@ -1,3 +1,7 @@
+import sys
+import types
+from unittest import mock
+
 from django.http import Http404
 from django.test import SimpleTestCase
 from rest_framework import exceptions, status
@@ -49,8 +53,39 @@ class ExceptionHandlerTest(SimpleTestCase):
         self.assertEqual(response.data["code"], ErrorCode.INTERNAL_ERROR)
         self.assertNotIn("boom", str(response.data))
 
-    def test_denial_audit_failure_does_not_change_response(self):
+    def _with_audit(self, record):
+        fake = types.ModuleType("apps.audit.service")
+        fake.record = record
+        return mock.patch.dict(sys.modules, {"apps.audit.service": fake})
+
+    def test_denial_records_permission_denied(self):
         for exc in (Forbidden(), NotAuthenticated(), NotFoundAsDenied()):
             with self.subTest(exc=type(exc).__name__):
-                response = self._handle(exc)
-                self.assertIn(response.status_code, (401, 403, 404))
+                record = mock.Mock()
+                with self._with_audit(record):
+                    self._handle(exc)
+                record.assert_called_once()
+                kwargs = record.call_args.kwargs
+                self.assertEqual(kwargs["action"], "permission_denied")
+                self.assertIsNone(kwargs["actor"])
+                self.assertEqual(kwargs["target_type"], "request")
+
+    def test_non_denial_error_is_not_audited(self):
+        record = mock.Mock()
+        with self._with_audit(record):
+            self._handle(ValidationFailed())
+        record.assert_not_called()
+
+    def test_denial_audit_failure_does_not_change_response(self):
+        record = mock.Mock(side_effect=RuntimeError("db down"))
+        for exc, http_status in (
+            (Forbidden(), 403),
+            (NotAuthenticated(), 401),
+            (NotFoundAsDenied(), 404),
+        ):
+            with self.subTest(exc=type(exc).__name__):
+                with self._with_audit(record), self.assertLogs(
+                    "apps.core.exception_handler", level="ERROR"
+                ):
+                    response = self._handle(exc)
+                self.assertEqual(response.status_code, http_status)

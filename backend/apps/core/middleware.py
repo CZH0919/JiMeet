@@ -1,4 +1,3 @@
-"""请求级 request_id 与日志过滤器。"""
 import logging
 import re
 import uuid
@@ -15,7 +14,9 @@ def current_request_id() -> str:
 
 
 class RequestIdMiddleware:
-    """从 X-Request-Id 取值（不合法则生成），写入 request、日志上下文与响应头。"""
+    """
+    从 X-Request-Id 取值（不合法则生成），写入 request、日志上下文与响应头。
+    """
 
     def __init__(self, get_response):
         self.get_response = get_response
