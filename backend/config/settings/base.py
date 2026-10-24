@@ -126,7 +126,10 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-AUTHENTICATION_BACKENDS = ["django.contrib.auth.backends.ModelBackend"]
+AUTHENTICATION_BACKENDS = [
+    "apps.accounts.backends.SSOBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
 
 LANGUAGE_CODE = "zh-hans"
 TIME_ZONE = "Asia/Shanghai"

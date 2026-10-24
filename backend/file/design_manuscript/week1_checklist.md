@@ -177,3 +177,59 @@ OK 结束。在 PostgreSQL 下双线程行锁测试应实际执行，不应跳�
 
 上述并发测试验证底层锁与 mark_full 的组合；完整业务 service 的接受/撤回冲突
 仍需在对应 service 实现后做接口或 service 层契约测试。
+
+## 第 5 天：accounts + 契约测试
+
+### 实现项（待本机验收）
+
+- [x] identity 提供临时角色判定（带 TODO）与允许域名的合法邮箱校验。
+- [x] 定义 SSOIdentity、SSOProvider、DevSSOProvider、CasSSOProvider 预留方法。
+- [x] login_with_sso 按 subject / real_id 查找、绑定或创建，拒绝身份冲突和停用账号。
+- [x] update_profile 校验昵称与严格布尔开关；give_privacy_consent 条件更新首次时间。
+- [x] 注册 SSOBackend，同时保留 Django ModelBackend 的 Admin 密码登录能力。
+- [x] 提供 CSRF、dev-login、logout、GET/PATCH me、privacy-consent 与 SSO 501 预留接口。
+- [x] 开发登录只在 DEBUG 与 ALLOW_DEV_LOGIN 同时开启时注册，匿名登录显式校验 CSRF。
+- [x] 本人资料含 name / email，不暴露数据库 id、real_id 或 subject；更新拒绝未知字段。
+- [x] 契约测试用 A 的 Python 接口与 ORM 覆盖计划 6.2 全部七类场景。
+- [x] 契约测试额外验证活动标签、通知接收人及关联、新文件失败清理。
+- [ ] 用户执行账号测试、契约测试与全量回归通过（本次未执行测试）。
+
+### 调用与开发约定
+
+- 所有账号接口位于 /api/v1/，无末尾斜杠。先 GET /auth/csrf，再用返回的
+  csrf_token 作为 X-CSRFToken，携带同一客户端 cookie POST /auth/dev-login。
+  登录会轮换 CSRF token，后续写请求使用新 csrftoken cookie 的值或重新获取 token。
+- dev-login 接收 real_id、可选 name/email；默认姓名为编号，默认邮箱为
+  <real_id>@tongji.edu.cn，稳定 subject 为 dev:<real_id>。仅作开发身份，不能用于生产。
+- 正式 SSO 两个 GET 接口返回 501 / INTERNAL_ERROR / 预留；CAS 方法抛 reserved。
+- 登录已存在用户不覆盖昵称、姓名、邮箱、角色、管理员权限、通知开关和隐私确认。
+  相同 subject 对应不同编号或编号已经绑定其他 subject 时返回 AUTH_FAILED。
+- 契约测试的 _publish / _apply / _accept 仅为 B 提供底层调用参考，不是生产业务 service。
+  满员人数与 full 状态一起保存；七天整点优先返回 PROCESSING_WINDOW_CLOSED。
+- 本次不修改模型、迁移、database.md，不提前实现第六天管理命令与交接文档。
+
+### 本机执行命令与预期
+
+```bash
+cd /Users/alcony/code/jiMeet/backend
+.venv/bin/python manage.py check
+.venv/bin/python manage.py makemigrations --check --dry-run
+.venv/bin/python manage.py test tests.accounts tests.contract --verbosity 2
+.venv/bin/python manage.py test tests --verbosity 2
+```
+
+预期：系统检查无错误；迁移检查 No changes detected；专项与全量测试均以 OK
+结束。账号测试使用真实 session 和强制 CSRF 检查；契约测试使用临时简历目录，
+邮件仍只调度预留函数，不发送邮件。数据库要求沿用此前 PostgreSQL 测试环境。
+
+### 第五天账号测试覆盖补充（待运行）
+
+- [x] 验证密码认证落到 ModelBackend，错误密码被拒，真实 Admin 登录表单及后台会话可用。
+- [x] 不重载已注册开发路由，关闭运行期开关后由视图返回 404，且不创建用户或登录会话。
+- [x] 开发登录传入 name/email，核对数据库资料和登录响应 data 与 GET /me 一致。
+- [x] 模拟首次建号的 IntegrityError，验证转换为 AUTH_FAILED/401 且不泄露数据库错误。
+- [x] 明确当前匿名 POST /auth/logout 返回统一 UNAUTHENTICATED/401；保持现有行为。
+- [ ] 用户运行补充账号测试及全量回归通过。
+
+IntegrityError 补充用例为确定性故障注入，不代表真实并发首次登录测试；
+现有邮箱唯一冲突用例另外验证 PostgreSQL 实际唯一约束错误的转换。
