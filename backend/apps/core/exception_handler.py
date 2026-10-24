@@ -37,6 +37,9 @@ def handle(exc, context) -> Response:
 
     mapped = _map_drf_exception(exc)
     if mapped is not None:
+        if isinstance(exc, (exceptions.NotAuthenticated, exceptions.PermissionDenied)):
+            denial = NotAuthenticated() if isinstance(exc, exceptions.NotAuthenticated) else Forbidden()
+            _audit_denial(denial, context)
         code, message, http_status, details = mapped
         return _respond(code, message, http_status, details)
 
@@ -86,17 +89,16 @@ def _map_drf_exception(exc):
 def _audit_denial(exc, context) -> None:
     if not isinstance(exc, (Forbidden, NotAuthenticated, NotFoundAsDenied)):
         return
-    try:
-        # audit 尚未实现时跳过，不因审计失败改变响应。
-        from apps.audit.service import record
-    except ImportError:
-        return
     request = context.get("request")
     target_type, target_id = exc.audit_target or ("request", None)
     try:
+        from apps.audit.actions import PERMISSION_DENIED
+        from apps.audit.service import record
+
+        actor = getattr(request, "user", None)
         record(
-            action="permission_denied",
-            actor=getattr(request, "user", None) if getattr(request, "user", None) and getattr(request.user, "is_authenticated", False) else None,
+            action=PERMISSION_DENIED,
+            actor=actor if getattr(actor, "is_authenticated", False) else None,
             target_type=target_type,
             target_id=target_id,
             reason=exc.message,

@@ -39,7 +39,8 @@ class ExceptionHandlerTest(SimpleTestCase):
         ]
         for exc, code, http_status in cases:
             with self.subTest(exc=type(exc).__name__):
-                response = self._handle(exc)
+                with self._with_audit(mock.Mock()):
+                    response = self._handle(exc)
                 self.assertEqual(response.status_code, http_status)
                 self.assertEqual(response.data["code"], code)
 

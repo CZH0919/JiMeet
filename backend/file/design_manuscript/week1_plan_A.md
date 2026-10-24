@@ -108,7 +108,7 @@ touch apps/__init__.py tests/__init__.py
    - `BizError` → 信封。
    - DRF 自带异常（`NotAuthenticated`、`PermissionDenied`、`ValidationError`、`Http404`、`MethodNotAllowed`、`ParseError`）→ 映射到同名错误码。
    - 其他异常 → `INTERNAL_ERROR`，响应不含堆栈；日志记录堆栈。
-   - 拒绝类（`Forbidden`、`NotAuthenticated`、`NotFoundAsDenied`）→ 调 `audit.service.record(action="permission_denied", ...)`，包在 `try/except` 里，记录失败只写日志，不改变响应。
+   - 拒绝类（`Forbidden`、`NotAuthenticated`、`NotFoundAsDenied`）→ 调 `audit.service.record(action="permission_denied", ...)`，包在 `try/except` 里，记录失败只写日志，不改变响应。DRF 自带的 `NotAuthenticated`、`PermissionDenied` 同样视为拒绝类并记审计（未登录请求没有频率限制，`audit_log` 会随探测增长，留存清理另行处理）。
 6. `core/pagination.py`：`paginate(queryset, request) -> (items, page, page_size, total)`；`page` 默认 1，`page_size` 默认 20、最大 50，非法值抛 `ValidationFailed`。
 7. `core/permissions.py`：`IsAuthenticatedBiz`（未登录抛 `NotAuthenticated`）、`IsAdminFlag`（只看 `user.is_admin`）。
 8. `core/tx.py`：
@@ -328,14 +328,14 @@ def can_process_application(user, app, recruitment, now) -> bool
 | RECRUITMENT_DELETED | recruitment_deleted | 申请人、管理员删除时另含发布者 | 申请人必填，发布者空 |
 | ADMIN_REMOVED | admin_removed | 发布者 | 空 |
 
-`ALL`、`APPLICATION_EVENTS`（前缀为 `application_` 的子集）、`REQUIRES_APPLICATION`（上表"必填"的子集）三个集合从常量自动生成，测试保证三者一致。
+`ALL`、`APPLICATION_EVENTS`（前缀为 `application_` 的子集）、`REQUIRES_APPLICATION`（上表"必填"的子集）三个集合从常量自动生成，测试保证三者一致。`RECRUITMENT_DELETED` 是否需要申请取决于接收人（申请人必填、发布者为空），因此不放进 `REQUIRES_APPLICATION`，由 `notify` 按接收人判断。
 
 `templates.py`：`render(type, context) -> (title, content)`。`context` 只允许键 `recruitment_title`、`status_label`、`link`、`auto`、`reason_label`；出现其他键直接抛 `ValueError`（防止有人把简历内容或申请人信息塞进去）。内容里不出现申请人姓名。每种类型一条模板，固定中文文案，标题 ≤ 100 字。
 
 `service.py::notify(...)`（签名见总规划 4.5）实现细节：
 1. `assert_in_atomic()`。
 2. 类型在 `REQUIRES_APPLICATION` 内而 `application is None` 或 `recruitment is None` → `ValueError`。
-3. 类型属于 `APPLICATION_EVENTS` 且 `rules.is_retention_expired(recruitment, clock.now())` → 返回 `None`。
+3. 类型属于 `APPLICATION_EVENTS`，或本次通知带有 `application`（含发给申请人的 `RECRUITMENT_UPDATED`、`RECRUITMENT_DELETED`），且 `rules.is_retention_expired(recruitment, clock.now())` → 返回 `None`。发给发布者、不带申请的通知不受留存影响。
 4. `render` → 创建 `Notification`。
 5. `recipient.email_notify_enabled` 为真 → 创建 `EmailLog(to_email=recipient.email, status=pending, attempts=0)`，并 `transaction.on_commit(lambda: mail.dispatch(log_id))`。
 6. 返回通知对象。
@@ -344,7 +344,7 @@ def can_process_application(user, app, recruitment, now) -> bool
 
 ### 4.5 `audit`
 
-`actions.py` 五个常量；`service.record(...)` 按总规划 4.8 实现：`actor` 非空时快照 `actor_role`、`actor_is_admin`，为空时三个字段同为 `None`；`reason` 超过 500 字截断；`target_type` 必填。
+`actions.py` 五个常量及集合 `ALL`；`service.record(...)` 按总规划 4.8 实现，`action` 不在 `ALL` 内或 `admin_delete` 缺原因时抛 `ValueError`：`actor` 非空时快照 `actor_role`、`actor_is_admin`，为空时三个字段同为 `None`；`reason` 超过 500 字截断；`target_type` 必填。
 
 ### 4.6 第 3 天测试
 

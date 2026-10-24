@@ -91,3 +91,35 @@ BASH
   按计划，实例保护不替代数据库权限管理，业务代码不得调用 QuerySet.update/delete 绕过。
 - `tests.test_schema` 自动核对测试数据库中 10 张业务表的列、空值约束、默认值存在性、
   命名约束/索引及 pg_trgm/GIN；开发库已按用户回传的 `\d+` 输出逐表核对。
+
+## 第 3 天：rules、policies、notify、audit
+
+### 实现项（待本机验收）
+
+- [x] 提供招聘纯规则函数：截止时间、人数、七天窗口、180 天留存起算及操作窗口。
+- [x] 提供招聘权限与 PublishView，以及申请字段权限 ApplicationAccess 和操作权限。
+- [x] 管理员不增加申请内容读取权限；撤回/失效申请不返回简历；到留存期限全部不可见。
+- [x] 提供通知类型、固定模板及事务内 notify，邮件记录同事务创建，提交后调用预留 dispatch。
+- [x] 申请事件及发给申请人的招聘更新/删除通知关联申请和招聘，并受留存期限限制。
+- [x] 提供审计动作与 record，保存身份快照、截断原因，接通业务及 DRF 权限拒绝审计。
+- [x] 添加关键边界与事务测试，沿用 Django runner 和现有测试工厂。
+- [x] 用户执行第三天测试及全量回归通过。
+
+### 本机执行命令与预期
+
+```bash
+cd /Users/alcony/code/jiMeet/backend
+.venv/bin/python manage.py check
+.venv/bin/python manage.py makemigrations --check --dry-run
+.venv/bin/python manage.py test tests.recruitments.test_rules tests.applications.test_policies tests.notifications.test_notify tests.audit.test_audit --verbosity 2
+.venv/bin/python manage.py test tests --verbosity 2
+```
+
+预期：系统检查无错误；迁移检查输出 No changes detected；第三天测试和全量测试
+均以 OK 结束。此次没有修改模型，无需新增迁移。数据库测试要求本机 PostgreSQL
+可连接，jimeet 角色可创建 test_jimeet，pg_trgm 扩展可用，沿用第二天环境。
+
+核对重点：到截止时刻不可投递，关闭满七天不可处理，留存满 180 天不可读取；
+通知回滚时邮件记录和提交回调也一并取消；邮件开关关闭时仍创建站内通知，
+但不创建 EmailLog。dispatch 只记日志，EmailLog 保持 pending、attempts=0。
+权限拒绝审计写入失败和未处理异常模拟产生的 ERROR 日志属于预期测试输出。
