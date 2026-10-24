@@ -123,3 +123,57 @@ cd /Users/alcony/code/jiMeet/backend
 通知回滚时邮件记录和提交回调也一并取消；邮件开关关闭时仍创建站内通知，
 但不创建 EmailLog。dispatch 只记日志，EmailLog 保持 pending、attempts=0。
 权限拒绝审计写入失败和未处理异常模拟产生的 ERROR 日志属于预期测试输出。
+
+## 第 4 天：state + files
+
+### 实现项（待本机验收）
+
+- [x] 提供 SyncResult、sync_recruitment、reject_processing_applications、mark_full。
+- [x] 提供 run_in_recruitment_tx，补执行先提交，业务回调失败仅回滚第二个事务。
+- [x] core.tx 增加线程本地招聘锁记录、事务身份检查与上下文清理。
+- [x] 到期关闭取 deadline，七天拒绝取 closed_at + 7 天，满员拒绝取 full_at。
+- [x] 提供 PDF/DOC/DOCX 扩展名、声明及实际大小、文件头与 DOCX 目录校验。
+- [x] 提供 StoredResume、随机排他创建、fsync、展示名清洗及私有路径校验。
+- [x] 提供 staged_resume 异常清理、discard_resume 和分批 cleanup_orphans。
+- [x] 提供状态、事务回滚、双线程行锁、文件校验与孤立文件清理的关键测试。
+- [ ] 用户执行第四天专项测试与全量回归通过（本次未执行测试）。
+
+### 调用约定
+
+- 达到人数上限时，在持有招聘锁的对象上增加 accepted_count 后直接调用
+  mark_full；由它把人数与 full 状态一起保存。不可先单独保存满员人数，
+  否则会违反 recruitment_full_chk。业务回调中先重新读取申请状态再决定操作。
+- sync_recruitment 和 run_in_recruitment_tx 禁止嵌入调用方外层 atomic。
+  直接使用 lock_recruitment 的调用方可用 recruitment_lock_scope 管理锁记录。
+- save_resume 在事务外调用，返回 path 为 PRIVATE_FILE_ROOT 下的相对路径。
+  staged_resume 的 with 块必须覆盖数据库事务退出；成功后才清理旧文件。
+- cleanup_orphans 不挂定时命令，referenced 回调分批接收相对路径并返回已被
+  Application 引用的路径集合。只清理 mtime 严格早于 24 小时门槛的未引用文件。
+- 本次不修改模型、迁移或数据库设计；mail.dispatch 仍为日志预留实现。
+
+### 本机执行命令与预期
+
+```bash
+cd /Users/alcony/code/jiMeet/backend
+.venv/bin/python manage.py check
+.venv/bin/python manage.py makemigrations --check --dry-run
+.venv/bin/python manage.py test tests.recruitments.test_state tests.files.test_storage tests.core.test_tx --verbosity 2
+.venv/bin/python manage.py test tests --verbosity 2
+```
+
+预期：系统检查无错误，迁移检查输出 No changes detected，专项及全量测试均以
+OK 结束。在 PostgreSQL 下双线程行锁测试应实际执行，不应跳过。测试沿用第二天
+的测试库创建权限和 pg_trgm 环境。故障模拟中的 WARNING/ERROR 日志不代表失败，
+以最终测试结果为准；文件测试使用临时目录，不改动现有简历文件。
+
+### 第四天测试覆盖补充（待运行）
+
+- [x] 关闭通知核对接收人为发布者，同时核对 recruitment_id 和 application_id。
+- [x] 多个 processing 申请分别收到恰好一条拒绝通知；重复补执行不增加通知。
+- [x] accepted / withdrawn / rejected / invalid 申请所有字段保持不变，不产生拒绝通知，接受人数不变。
+- [x] 含 ../ 与反斜杠的上传名直接进入存储层，验证随机保存路径不含用户目录与文件名。
+- [x] 增加不同申请竞争最后一个名额的并发测试，验证一人接受、一人拒绝、人数为 1、招聘满员及拒绝通知关联正确。
+- [x] 用户运行补充测试及回归通过。
+
+上述并发测试验证底层锁与 mark_full 的组合；完整业务 service 的接受/撤回冲突
+仍需在对应 service 实现后做接口或 service 层契约测试。

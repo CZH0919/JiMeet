@@ -1,8 +1,66 @@
+from contextlib import contextmanager
+from threading import local
+
 from django.db import connection
 
 from apps.core.errors import NotFound
 
 _LOCKED_FLAG = "_tx_locked"
+_held = local()
+
+
+def held_recruitment_id() -> int | None:
+    """
+    返回当前事务持有的招聘锁；事务结束或回滚到加锁前则返回 None。
+
+    Returns:
+        招聘对象的数据库主键，或 None
+    """
+    block = getattr(_held, "atomic_block", None)
+    # 记录 atomic 对象身份，防止上一笔事务或已回滚 savepoint 的标记被复用。
+    if not connection.in_atomic_block or not any(block is item for item in connection.atomic_blocks):
+        return None
+    return getattr(_held, "recruitment_id", None)
+
+
+@contextmanager
+def recruitment_lock_scope():
+    """
+    隔离服务事务的锁标记，退出时无论成功或失败均恢复外层记录。
+
+    ### Usage:
+        with tx.recruitment_lock_scope():
+            r = tx.lock_recruitment(recruitment_id)
+            ...
+    
+    """
+    previous = (_held.__dict__).copy()
+    _held.__dict__.clear()
+    try:
+        yield
+    finally:
+        _held.__dict__.clear()
+        _held.__dict__.update(previous)
+
+
+def assert_recruitment_locked(recruitment) -> None:
+    """
+    确认对象在当前事务中已通过 lock_recruitment 加锁。
+
+    Args:
+        recruitment: 招聘对象
+    
+    Raises:
+        RuntimeError: 招聘对象未加锁或不属于当前事务
+    """
+    assert_in_atomic()
+    # 同时核对事务和对象标记，拒绝跨事务复用旧对象。
+    if (
+        held_recruitment_id() != recruitment.pk
+        or getattr(recruitment, _LOCKED_FLAG, None) is not getattr(_held, "atomic_block", None)
+    ):
+        raise RuntimeError("必须先调用 lock_recruitment 持有招聘锁")
+
 
 
 def assert_not_in_atomic() -> None:
@@ -48,7 +106,9 @@ def lock_recruitment(recruitment_id: int):
         recruitment = Recruitment.objects.select_for_update().get(pk=recruitment_id)
     except Recruitment.DoesNotExist:
         raise NotFound("招聘不存在") from None
-    setattr(recruitment, _LOCKED_FLAG, True)
+    _held.recruitment_id = recruitment.pk
+    _held.atomic_block = connection.atomic_blocks[-1]
+    setattr(recruitment, _LOCKED_FLAG, _held.atomic_block)
     return recruitment
 
 
@@ -68,8 +128,7 @@ def lock_application(application_id: int, recruitment):
         NotFound: 申请记录不存在
     """
     assert_in_atomic()
-    if not getattr(recruitment, _LOCKED_FLAG, False):
-        raise RuntimeError("必须先调用 lock_recruitment 持有招聘锁")
+    assert_recruitment_locked(recruitment)
     from apps.applications.models import Application
 
     try:
