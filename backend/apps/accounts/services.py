@@ -54,7 +54,7 @@ def login_with_sso(identity: SSOIdentity) -> User:
                     user.save(update_fields=["sso_subject", "updated_at"])
                 else:
                     user = User.objects.create_user(
-                        real_id=real_id, name=name, email=email, nickname=name,
+                        real_id=real_id, name=name, email=email,
                         role=resolve_role(real_id), sso_subject=subject, is_admin=False,
                     )
             if not user.is_active:

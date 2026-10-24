@@ -64,7 +64,9 @@ class UserManagerTest(TxTestCase):
     def test_create_user_defaults(self):
         user = User.objects.create_user("s1", "张三", "S1@tongji.edu.cn")
         self.assertEqual(user.role, "student")
-        self.assertEqual(user.nickname, "张三")
+        self.assertEqual(user.name, "张三")
+        self.assertRegex(user.nickname, r"^同学_[0-9a-f]{12}$")
+        self.assertNotEqual(user.nickname, user.name)
         self.assertEqual(user.email, "S1@tongji.edu.cn")
         self.assertFalse(user.is_admin)
         self.assertFalse(user.is_staff)

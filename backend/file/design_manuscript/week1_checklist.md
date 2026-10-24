@@ -233,3 +233,29 @@ cd /Users/alcony/code/jiMeet/backend
 
 IntegrityError 补充用例为确定性故障注入，不代表真实并发首次登录测试；
 现有邮箱唯一冲突用例另外验证 PostgreSQL 实际唯一约束错误的转换。
+
+## 第 6 天：7.1 预留文件与同步命令
+
+- [x] 补齐 recruitments/retention.py::purge_expired_applications 与 files/jobs.py 任务包装预留。
+- [x] 邮件 send_email_log / retry_pending_emails 保持 reserved for week 2；CAS 保持第五天约定的 reserved。
+- [x] 增加四个预留命令：run_purge_applications、run_send_emails、run_cleanup_orphan_files、run_cleanup_audit_logs，均抛 CommandError("reserved")。
+- [x] run_sync_recruitments 真实现：筛选未删除的到期 open 和七天已满且存在 processing 的 closed 招聘，逐个独立同步，失败记日志并继续，输出统计。
+- [x] chat 保持现有模型；feed 只增加空包，不注册路由、不新增业务表。
+- [x] 补充预留入口、同步候选边界、幂等及单项失败继续的精简测试。
+- [ ] 用户执行上述新增测试及全量回归通过。
+
+本次只完成 7.1，不包含 7.2 交接文档与 7.3 部署检查、全量三次回归。
+CAS 异常文本沿用第五天明确规定的 reserved，未改成第六天表中笼统的“同上”。
+
+```bash
+cd /Users/alcony/code/jiMeet/backend
+.venv/bin/python manage.py check
+.venv/bin/python manage.py makemigrations --check --dry-run
+.venv/bin/python manage.py test tests.test_reserved_commands tests.recruitments.test_sync_command --verbosity 2
+.venv/bin/python manage.py test tests --verbosity 2
+```
+
+预期：系统检查无错误，无新增迁移，测试均 OK。四个预留命令直接执行时应报
+CommandError: reserved 并以非零状态退出，不能视为已完成清理或发送。
+需要实际补执行开发库状态时运行 `.venv/bin/python manage.py run_sync_recruitments`；
+该命令会真实修改到期招聘、申请及关联通知/邮件待发送记录，本次未执行。

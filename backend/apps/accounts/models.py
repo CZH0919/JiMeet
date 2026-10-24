@@ -73,7 +73,10 @@ class UserManager(BaseUserManager):
             创建的用户对象
         """
         extra_fields.setdefault("role", Role.STUDENT)
-        extra_fields.setdefault("nickname", name)
+        if "nickname" not in extra_fields:
+            nickname = f"同学_{uuid.uuid4().hex[:12]}"
+            # 即使真实姓名恰好与生成值相同，也保持默认昵称与姓名分离。
+            extra_fields["nickname"] = nickname if nickname != name else f"用户_{uuid.uuid4().hex[:12]}"
         return self._create_user(real_id, name, email, password, **extra_fields)
 
     def create_superuser(self, real_id, name, email, password, **extra_fields):

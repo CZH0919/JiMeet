@@ -246,3 +246,107 @@ class StateTest(TxTestCase):
         notice = Notification.objects.get(type=types.APPLICATION_REJECTED)
         self.assertEqual((notice.application_id, notice.recipient_id, notice.recruitment_id),
                          (loser.pk, loser.applicant_id, self.r.pk))
+
+    def _race(self, workers):
+        """让若干线程在同一时刻开始执行，返回各自的结果。"""
+        barrier = Barrier(len(workers), timeout=10)
+
+        def run(work):
+            connections.close_all()
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET lock_timeout = '5s'")
+                barrier.wait()
+                return work()
+            finally:
+                connections.close_all()
+
+        with ThreadPoolExecutor(max_workers=len(workers)) as pool:
+            futures = [pool.submit(run, work) for work in workers]
+            return [future.result(timeout=20) for future in futures]
+
+    def test_concurrent_accept_and_withdraw_stay_consistent(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("需要 PostgreSQL 行锁")
+        Recruitment.objects.filter(pk=self.r.pk).update(deadline=self.now + timedelta(days=1))
+
+        def change(status, count):
+            def work():
+                with tx.recruitment_lock_scope(), transaction.atomic():
+                    r = tx.lock_recruitment(self.r.pk)
+                    app = tx.lock_application(self.app.pk, r)
+                    if app.status != "processing":
+                        return False
+                    app.status = status
+                    app.decided_at = self.now
+                    app.save(update_fields=["status", "decided_at", "updated_at"])
+                    r.accepted_count += count
+                    r.save(update_fields=["accepted_count", "updated_at"])
+                    return status
+            return work
+
+        results = self._race([change("accepted", 1), change("withdrawn", 0)])
+        self.assertEqual(results.count(False), 1)
+        self.app.refresh_from_db()
+        self.r.refresh_from_db()
+        self.assertEqual(self.app.status, next(item for item in results if item))
+        self.assertEqual(self.r.accepted_count, 1 if self.app.status == "accepted" else 0)
+
+    def test_concurrent_sync_closes_only_once(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("需要 PostgreSQL 行锁")
+        results = self._race([lambda: sync_recruitment(self.r.pk, now=self.now) for _ in range(3)])
+        self.assertEqual(sum(result.closed for result in results), 1)
+        self.r.refresh_from_db()
+        self.assertEqual((self.r.status, self.r.closed_at), ("closed", self.now))
+        self.assertEqual(Notification.objects.filter(type=types.RECRUITMENT_CLOSED).count(), 1)
+
+    def test_concurrent_accepts_never_exceed_headcount(self):
+        if connection.vendor != "postgresql":
+            self.skipTest("需要 PostgreSQL 行锁")
+        Recruitment.objects.filter(pk=self.r.pk).update(
+            deadline=self.now + timedelta(days=1), max_headcount=2,
+        )
+        applications = [self.app] + [make_application(self.r, make_user()) for _ in range(3)]
+
+        def accept(application_id):
+            def work():
+                with tx.recruitment_lock_scope(), transaction.atomic():
+                    r = tx.lock_recruitment(self.r.pk)
+                    app = tx.lock_application(application_id, r)
+                    if app.status != "processing" or r.status != "open":
+                        return False
+                    app.status = "accepted"
+                    app.decided_at = self.now
+                    app.save(update_fields=["status", "decided_at", "updated_at"])
+                    r.accepted_count += 1
+                    if r.accepted_count == r.max_headcount:
+                        mark_full(r, self.now)
+                    else:
+                        r.save(update_fields=["accepted_count", "updated_at"])
+                    return True
+            return work
+
+        results = self._race([accept(app.pk) for app in applications])
+        self.assertEqual(results.count(True), 2)
+        self.r.refresh_from_db()
+        self.assertEqual((self.r.status, self.r.accepted_count), ("full", 2))
+        stored = Application.objects.filter(recruitment=self.r)
+        self.assertEqual(stored.filter(status="accepted").count(), 2)
+        self.assertEqual(stored.filter(status="rejected").count(), 2)
+        self.assertEqual(stored.filter(status="processing").count(), 0)
+        self.assertEqual(Notification.objects.filter(type=types.APPLICATION_REJECTED).count(), 2)
+
+    def test_batch_timeout_rejects_every_processing_application(self):
+        extra = [make_application(self.r, make_user()) for _ in range(60)]
+        end = self.now + timedelta(days=7)
+        with self.freeze_at(end):
+            result = sync_recruitment(self.r.pk, now=end)
+        self.assertEqual((result.closed, result.auto_rejected), (True, 61))
+        stored = Application.objects.filter(recruitment=self.r)
+        self.assertEqual(stored.count(), 61)
+        self.assertEqual(stored.filter(status="rejected", decided_at=end).count(), 61)
+        notices = Notification.objects.filter(type=types.APPLICATION_REJECTED)
+        self.assertEqual(notices.count(), 61)
+        self.assertEqual(notices.values("application_id").distinct().count(), 61)
+        self.assertEqual(len(extra), 60)

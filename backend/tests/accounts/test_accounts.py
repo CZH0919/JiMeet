@@ -19,6 +19,18 @@ from tests.factories import make_user
 
 
 class IdentityTest(SimpleTestCase):
+    def test_default_nickname_does_not_use_identity_fields(self):
+        with mock.patch.object(User, "save"):
+            user = User.objects.create_user("123", "陈同学", "123@tongji.edu.cn")
+            self.assertRegex(user.nickname, r"^同学_[0-9a-f]{12}$")
+            self.assertNotEqual(user.nickname, user.name)
+            custom = User.objects.create_user("456", "林同学", "456@tongji.edu.cn", nickname="山间清风")
+            self.assertEqual(custom.nickname, "山间清风")
+            with mock.patch("apps.accounts.models.uuid.uuid4") as random_uuid:
+                random_uuid.return_value.hex = "a" * 32
+                same_name = User.objects.create_user("789", "同学_aaaaaaaaaaaa", "789@tongji.edu.cn")
+                self.assertNotEqual(same_name.nickname, same_name.name)
+
     @override_settings(ALLOWED_EMAIL_DOMAINS=["tongji.edu.cn"])
     def test_identity_rules(self):
         for real_id, role in (("t123", "teacher"), ("T123", "teacher"), ("123", "student")):
@@ -34,10 +46,20 @@ class IdentityTest(SimpleTestCase):
 
 
 class AccountServicesTest(TxTestCase):
+    def test_manager_default_nickname_and_explicit_nickname(self):
+        user = make_user(name="陈同学")
+        self.assertRegex(user.nickname, r"^同学_[0-9a-f]{12}$")
+        self.assertNotEqual(user.nickname, user.name)
+        custom = make_user(name="林同学", nickname="山间清风")
+        self.assertEqual(custom.nickname, "山间清风")
+
     def test_create_repeat_and_bind(self):
         identity = SSOIdentity("T123", "教师", "t123@tongji.edu.cn", "subject-123")
         user = login_with_sso(identity)
-        self.assertEqual((user.role, user.nickname, user.is_admin), ("teacher", "教师", False))
+        self.assertEqual((user.role, user.name, user.is_admin), ("teacher", "教师", False))
+        self.assertRegex(user.nickname, r"^同学_[0-9a-f]{12}$")
+        self.assertNotEqual(user.nickname, user.name)
+        self.assertEqual(login_with_sso(identity).nickname, user.nickname)
         user.nickname = "自定义"
         user.save(update_fields=["nickname"])
         self.assertEqual(login_with_sso(identity).nickname, "自定义")
@@ -210,8 +232,10 @@ class AccountViewsTest(TxTestCase):
         self.assertEqual(profile.status_code, 200)
         self.assertEqual(response.data["data"], profile.data["data"])
         data = response.data["data"]
-        self.assertEqual((data["name"], data["nickname"], data["email"], data["role"]),
-                         ("开发教师", "开发教师", "teacher456@tongji.edu.cn", "teacher"))
+        self.assertEqual((data["name"], data["email"], data["role"]),
+                         ("开发教师", "teacher456@tongji.edu.cn", "teacher"))
+        self.assertRegex(data["nickname"], r"^同学_[0-9a-f]{12}$")
+        self.assertNotEqual(data["nickname"], data["name"])
         user = User.objects.get(real_id="T456")
         self.assertEqual((user.name, user.email, user.uid), (data["name"], data["email"], data["uid"]))
 
