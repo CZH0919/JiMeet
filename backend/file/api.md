@@ -25,7 +25,7 @@
 
 ### 1.3 环境搭建与迁移
 
-依赖：Python 3.12+、PostgreSQL 14+。Django 6.1.2、DRF 3.18.3、psycopg 3.3.6 已固定在 `backend/requirements/base.txt`。完整的系统层步骤见 `file/django-env-setup.md`，下面只写本仓库的构建流程。
+依赖：Python 3.12+、PostgreSQL 15+。Django 6.1.2、DRF 3.18.3、psycopg 3.3.6 已固定在 `backend/requirements/base.txt`。完整的系统层步骤见 `file/django-env-setup.md`，下面只写本仓库的构建流程。
 
 配置全部读环境变量，不会自动加载 `.env`。`backend/.env.example` 列出了变量名，使用前自行导出，例如 `set -a; source .env; set +a`。
 
@@ -57,18 +57,44 @@ python manage.py runserver 127.0.0.1:8000
 
 ```bash
 sudo apt update
-sudo apt install -y python3.12 python3.12-venv postgresql postgresql-contrib libpq5
+
+# 先确认 Python 3.12 是否已经安装；Ubuntu 22.04 默认软件源可能没有 python3.12。
+python3.12 --version
+# 如果上面的命令不存在，请先用 pyenv 或其他方式安装 Python 3.12，
+# 不要把“找不到 python3.12”误认为 venv 创建失败。
+
+# Django 6.1.2 要求 PostgreSQL 15+。Ubuntu 默认仓库可能只有 PostgreSQL 14，
+# 此时应使用 PostgreSQL PGDG 软件源安装 postgresql-15，或升级现有集群。
+sudo apt install -y curl ca-certificates gnupg
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg
+echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo $VERSION_CODENAME)-pgdg main" \
+  | sudo tee /etc/apt/sources.list.d/pgdg.list
+sudo apt update
+sudo apt install -y postgresql-15 postgresql-client-15 postgresql-contrib libpq5
 sudo systemctl enable --now postgresql
 
-sudo -u postgres psql -c "CREATE ROLE jimeet LOGIN PASSWORD 'jimeet' CREATEDB;"
+# 如果机器上已有 PostgreSQL 14 的 main 集群，安装 15 后先迁移：
+# sudo pg_upgradecluster -v 15 14 main
+# 确认 pg_lsclusters 后再考虑清理旧集群；不要直接删除仍有数据的集群。
+
+# 首次配置执行；若提示角色或数据库已存在，说明之前已经创建过，可继续。
+cd /tmp
+sudo -u postgres psql -d postgres -c "CREATE ROLE jimeet LOGIN PASSWORD 'jimeet' CREATEDB;"
 sudo -u postgres createdb -O jimeet jimeet
 
-cd backend
+cd ~/桌面/jimeet/jiMeet/backend
 python3.12 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements/base.txt
+python -m pip install -r requirements/base.txt
 
+# .env 不会被 Django 自动加载；复制后必须填写 DB_PASSWORD 和 DJANGO_SECRET_KEY。
 cp .env.example .env
+# DB_PASSWORD 必须与上面 CREATE ROLE 使用的密码一致；DJANGO_SECRET_KEY 使用随机长字符串。
+# 例如可用下面命令生成密钥，然后将结果填入 .env 的 DJANGO_SECRET_KEY= 行。
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+
 set -a; source .env; set +a
 
 python manage.py check
@@ -80,10 +106,11 @@ python manage.py runserver 127.0.0.1:8000
 两个系统共用的后续命令：
 
 ```bash
-python manage.py makemigrations --check --dry-run   # 模型与迁移一致时输出 No changes detected
-python manage.py test tests                         # 全量测试，期望 173 项 OK
-python manage.py run_sync_recruitments              # 手工补执行到期招聘（会修改数据）
-python manage.py createsuperuser                    # 需要进 Django Admin 时
+set -a; source .env; set +a       # 每个新终端都要执行；项目不会自动加载 .env
+.venv/bin/python manage.py makemigrations --check --dry-run   # 模型与迁移一致时输出 No changes detected
+.venv/bin/python manage.py test tests                         # 全量测试，期望 173 项 OK
+.venv/bin/python manage.py run_sync_recruitments              # 手工补执行到期招聘（会修改数据）
+.venv/bin/python manage.py createsuperuser                    # 需要进 Django Admin 时
 ```
 
 生产环境：设置 `DJANGO_SETTINGS_MODULE=config.settings.prod`，并提供 `DJANGO_SECRET_KEY`、`DJANGO_ALLOWED_HOSTS`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`、`DB_HOST`，缺任何一项启动即报错。`ALLOW_DEV_LOGIN` 在生产环境开启会直接报错。
@@ -92,7 +119,8 @@ python manage.py createsuperuser                    # 需要进 Django Admin 时
 启动服务需要
 ```bash
 cd backend
-python manage.py runserver
+set -a; source .env; set +a
+.venv/bin/python manage.py runserver
 ```
 ---
 
