@@ -1,0 +1,6 @@
+backend/.venv/
+backend/var/
+.env
+__pycache__/
+*.pyc
+.python-version
