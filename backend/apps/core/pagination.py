@@ -18,7 +18,17 @@ def _read_positive_int(raw, field: str, default: int) -> int:
 
 
 def paginate(queryset, request):
-    """返回 (items, page, page_size, total)。"""
+    """
+    对 queryset 进行分页，返回 (items, page, page_size, total)。
+
+    Args:
+        queryset: 可分页的查询集
+        request: DRF Request 对象，包含分页参数
+    Returns:
+        tuple: (items, page_number, page_size, total_count)
+    Raises:
+        ValidationFailed: 当分页参数无效时抛出
+    """
     page_number = _read_positive_int(request.query_params.get("page"), "page", DEFAULT_PAGE)
     page_size = _read_positive_int(
         request.query_params.get("page_size"), "page_size", DEFAULT_PAGE_SIZE

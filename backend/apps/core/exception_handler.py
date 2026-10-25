@@ -31,6 +31,15 @@ def _respond(code: str, message: str, http_status: int, details=None) -> Respons
 
 
 def handle(exc, context) -> Response:
+    """
+    处理 DRF 异常，返回统一信封格式的响应，并在拒绝类异常时记录审计日志。
+
+    Args:
+        exc: 异常对象
+        context: 上下文字典，通常包含 'request' 键
+    Returns:
+        DRF Response 对象，包含统一信封格式的响应数据
+    """
     if isinstance(exc, BizError):
         _audit_denial(exc, context)
         return _respond(exc.code, exc.message, exc.http_status, exc.details)
