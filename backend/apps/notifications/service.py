@@ -52,5 +52,6 @@ def notify(*, recipient, type: str, recruitment, application=None, context: dict
             notification=notification, to_email=recipient.email,
             status=EmailStatus.PENDING, attempts=0,
         )
-        transaction.on_commit(lambda log_id=log.pk: mail.dispatch(log_id))
+        # 提交后的派发失败不能伪装成业务回滚，否则暂存文件上下文会误删已引用简历。
+        transaction.on_commit(lambda log_id=log.pk: mail.dispatch(log_id), robust=True)
     return notification

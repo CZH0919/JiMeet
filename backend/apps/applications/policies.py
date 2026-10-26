@@ -68,14 +68,19 @@ def resolve_application_access(user, app, recruitment, now) -> ApplicationAccess
     )
 
 
-def can_submit_application(user, recruitment, now, *, has_active_application: bool) -> None:
-    """依次校验本人投递、隐私确认、开放窗口及调用方查得的重复记录。"""
+def require_submit_identity(user, recruitment) -> None:
+    """在暂存文件及状态补执行前拒绝本人投递和未确认隐私的身份。"""
     if _is_user(user, recruitment.publisher_id):
         raise Forbidden("不能申请本人发布的招聘", code=ErrorCode.SELF_APPLICATION_FORBIDDEN)
     if not user or not user.is_authenticated:
         raise NotAuthenticated()
     if user.privacy_consented_at is None:
         raise Forbidden("请先确认个人信息处理告知", code=ErrorCode.PRIVACY_NOT_CONSENTED)
+
+
+def can_submit_application(user, recruitment, now, *, has_active_application: bool) -> None:
+    """依次校验本人投递、隐私确认、开放窗口及调用方查得的重复记录。"""
+    require_submit_identity(user, recruitment)
     if not rules.is_apply_open(recruitment, now):
         raise Conflict(ErrorCode.RECRUITMENT_NOT_OPEN, "招聘当前不可投递")
     if has_active_application:
