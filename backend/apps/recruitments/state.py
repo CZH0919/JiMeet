@@ -1,4 +1,5 @@
 """招聘状态流转；补执行与业务操作使用两个独立事务。"""
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, TypeVar
@@ -94,7 +95,7 @@ def sync_recruitment(recruitment_id: int, *, now: datetime | None = None) -> Syn
         return SyncResult(closed, rejected, False)
 
 
-def mark_full(r: Recruitment, now: datetime) -> None:
+def mark_full(r: Recruitment, now: datetime, *, extra_update_fields: Iterable[str] = ()) -> None:
     """
     在招聘锁内保存满员并拒绝其余申请，保留首次关闭与满员时间。
 
@@ -104,6 +105,7 @@ def mark_full(r: Recruitment, now: datetime) -> None:
     Args:
         r: 招聘对象，必须已加锁。
         now: 当前时间，默认为 clock.now()
+        extra_update_fields: 招募编辑时需一并保存的字段，保证人数上限和满员状态同次写入
     Returns:
         None
     Raises:
@@ -118,9 +120,10 @@ def mark_full(r: Recruitment, now: datetime) -> None:
         r.close_reason = CloseReason.DEADLINE
     r.status = RecruitmentStatus.FULL
     r.full_at = r.full_at if r.full_at is not None else now
-    r.save(update_fields=[
+    r.save(update_fields=list(dict.fromkeys([
+        *extra_update_fields,
         "accepted_count", "status", "full_at", "closed_at", "close_reason", "updated_at",
-    ])
+    ])))
     reject_processing_applications(r, r.full_at, "full")
 
 

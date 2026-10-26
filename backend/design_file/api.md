@@ -1,12 +1,12 @@
 # JiMeet 后端接口契约
 
-契约基线：Sprint1 阶段 1｜更新日期：2026-10-26
+接口契约：Sprint1｜当前交付：阶段 2｜更新日期：2026-10-26
 本文是前后端对接的唯一接口正文。路径相对服务地址，统一加 `/api/v1`，不带末尾斜杠；文件路径相对项目根目录。开发范围与分工遵循已核验的 Sprint1 计划，本文不代替阶段完成记录。
 
 ## 1. 接口状态与交付边界
 
 - **已实现**：当前代码可调用；开发登录还要求开发开关同时开启。
-- **待实现**：本阶段确定的目标契约，当前尚未注册路由，不能用于真实业务联调。对应阶段完成后再更新状态。
+- **待实现**：阶段 1 确定的目标契约，当前尚未注册路由，不能用于真实业务联调。对应阶段完成后再更新状态。
 - **预留**：已注册占位路由，明确返回 501；不属于本次正式认证交付。
 
 下表按“HTTP 方法 + 路径”标识接口；同一路径的不同方法分别验收。
@@ -22,14 +22,14 @@
 | POST | `/me/privacy-consent` | 已实现 | 1 / czh 核验 |
 | GET | `/auth/sso/login` | 预留 | 正式认证后续确定 |
 | GET | `/auth/sso/callback` | 预留 | 正式认证后续确定 |
-| GET | `/tags` | 待实现 | 2 / czh |
-| GET | `/recruitments` | 待实现 | 2 / czh |
-| POST | `/recruitments` | 待实现 | 2 / czh |
-| GET | `/recruitments/{id}` | 待实现 | 2 / czh |
-| PATCH | `/recruitments/{id}` | 待实现 | 2 / czh |
-| DELETE | `/recruitments/{id}` | 待实现 | 2 / czh |
-| POST | `/recruitments/{id}/close` | 待实现 | 2 / czh |
-| GET | `/me/recruitments` | 待实现 | 2 / czh |
+| GET | `/tags` | 已实现 | 2 / czh |
+| GET | `/recruitments` | 已实现 | 2 / czh |
+| POST | `/recruitments` | 已实现 | 2 / czh |
+| GET | `/recruitments/{id}` | 已实现 | 2 / czh |
+| PATCH | `/recruitments/{id}` | 已实现 | 2 / czh |
+| DELETE | `/recruitments/{id}` | 已实现 | 2 / czh |
+| POST | `/recruitments/{id}/close` | 已实现 | 2 / czh |
+| GET | `/me/recruitments` | 已实现 | 2 / czh |
 | POST | `/recruitments/{id}/applications` | 待实现 | 3 / czh |
 | GET | `/recruitments/{id}/applications` | 待实现 | 3 / czh |
 | GET | `/me/applications` | 待实现 | 3 / czh |
@@ -51,7 +51,7 @@
 
 ### 1.1 现有代码基线
 
-已存在 10 个业务模型及迁移、PostgreSQL 搜索索引、统一响应/错误码/分页、对象权限、招募状态工具、私有文件存储、通知创建与审计。当前总路由仅挂载 `core` 和 `accounts`；模型、工具函数和测试辅助流程不等于招募/申请 HTTP 接口已实现。
+已存在 10 个业务模型及迁移、PostgreSQL 搜索索引、统一响应/错误码/分页、对象权限、招募状态工具、私有文件存储、通知创建与审计。总路由已挂载 `core`、`accounts` 和 `recruitments`，招募 HTTP 接口已实现；申请、简历下载和通知读取接口仍待后续阶段实现。
 
 依赖以 `backend/requirements/base.txt` 为准：Python 3.12+、PostgreSQL 15+，Django 6.1.2、DRF 3.18.3、psycopg 3.3.6。配置从进程环境变量读取，不自动加载 `.env`；变量清单见 `backend/.env.example`。数据库、私有文件目录与凭据按各成员环境配置，个人部署过程不写入接口契约。
 
@@ -276,7 +276,7 @@ async function confirmPrivacyConsent() {
 
 当前均返回 501，`code=INTERNAL_ERROR`、`message="预留"`、`data=null`。正式认证方案尚未确定，本次前端联调使用开发身份。
 
-## 5. 招募目标契约（阶段 2，待实现）
+## 5. 招募接口（阶段 2，已实现）
 
 ### 5.1 标签与枚举
 
@@ -331,7 +331,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 普通招募列表及详情排除已删除记录，返回的 `is_deleted=false`。申请历史通过自己的招募摘要表达删除状态，不因招募详情 404 而丢失申请记录。
 
-待实现的详情 `data` 示例：当前用户为已确认隐私告知、尚未申请的普通浏览者。
+招募详情 `data` 示例：当前用户为已确认隐私告知、尚未申请的普通浏览者。
 
 ```json
 {
@@ -374,7 +374,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 | POST /recruitments | 第 5.2 节请求；新建招募与标签同一事务提交 | 201，RecruitmentDetail |
 | PATCH /recruitments/{id} | 仅发布者在 open 且未到截止时修改 | 200，RecruitmentDetail |
 | POST /recruitments/{id}/close | 仅发布者在 open 且未到截止时关闭；空请求体或 `{}` | 200，RecruitmentDetail |
-| DELETE /recruitments/{id} | 发布者受可编辑窗口限制，管理员可删除任意未删除招募；JSON `reason` 为字符串，管理员行使删除权限时必填且去空白后非空，普通发布者可省略 | 200，null |
+| DELETE /recruitments/{id} | 发布者受可编辑窗口限制，管理员可删除任意未删除招募；JSON `reason` 为 1～500 字的字符串，管理员必填，普通发布者可省略 | 200，null |
 
 `q` 对标题或描述做不区分大小写的包含搜索，去首尾空白，空串不筛选。`type/status` 为单一枚举，`tag` 为单个正整数标签 ID，多个条件取交集。无匹配标签正常返回空列表。排序为有效进行中在前，其余状态在后；各组按 `created_at DESC, id DESC` 稳定排序。类型、状态或标签参数空值/格式非法返回 400。
 
@@ -383,6 +383,8 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 对象可见但非发布者编辑/关闭为 403；窗口不允许为 409 `RECRUITMENT_NOT_EDITABLE`。人数上限低于已接受人数为 409 `HEADCOUNT_BELOW_ACCEPTED`；等于时在同一事务进入 full 并拒绝其余处理中申请。重复删除已删除对象为 404，重复关闭已关闭对象为 409，不重复生成通知。
 
 保留原有软删除：`deleted_at` 置为删除时间，`processing/accepted` 申请转为 `invalid`，已拒绝、已撤回不变，历史接受人数保留；不提供恢复功能。修改、关闭、删除的相关通知和审计按既有规则在事务中维护。
+
+**通知接收范围（已确认）：** 招募修改或删除只通知变更前仍为 processing/accepted 的申请人，已撤回或已拒绝者不再通知。调低人数上限触发满员时，相关申请人收到招募变更通知，剩余处理中申请另收到自动拒绝结果。管理员删除还向发布者发送治理删除通知；手动关闭向发布者发送明确的手动关闭通知，不立即拒绝已有申请。删除审计、通知及业务变更同事务提交，权限拒绝沿用公共审计处理。
 
 ## 6. 申请与私有简历目标契约（阶段 3～4，待实现）
 
@@ -533,3 +535,9 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 本阶段验证现有路由、响应信封、开发身份自动建号、登录后令牌轮换、会话退出、隐私确认幂等、字段拒绝及代理 Host/Origin 下的 CSRF 行为；目标接口的字段、权限、状态、错误码为后续阶段实现和回归依据。前端工程尚未建立，代理请求头验证不代表实际浏览器联调已完成。
 
 已有测试集从 `backend/` 执行：`python manage.py test tests --keepdb --noinput --settings=config.settings.test`；使用项目专用测试数据库，不能指向正式或其他项目数据库。正式阶段完成情况写入 `Project_Progress_Record/Sprint1_BackEnd/Record/`，此处不维护个人部署记录。
+
+### 8.4 阶段 2 实现与接入
+
+招募代码按 `services.py`、`selectors.py`、`serializers.py`、`views.py`、`urls.py` 分层；通用严格字段校验位于 `backend/apps/core/serializers.py`。复用原有模型与迁移，不增加运行时依赖。
+
+前端现在可依次使用开发身份登录、读取标签、发布招募、列表筛选、详情、修改、关闭、删除和“我的招募”。第 3.2 节的 `api` 调用函数可用于这些 JSON 请求；POST 成功返回 201，其他成功响应为 200。申请提交、申请处理、简历下载及通知读取仍以第 1 节的待实现状态为准。

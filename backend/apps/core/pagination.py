@@ -38,5 +38,6 @@ def paginate(queryset, request):
 
     total = queryset.count()
     offset = (page_number - 1) * page_size
-    items = list(queryset[offset : offset + page_size])
+    # 越界页无需访问数据切片，也避免极大页码转为数据库 OFFSET 时溢出。
+    items = [] if offset >= total else list(queryset[offset : offset + page_size])
     return items, page_number, page_size, total

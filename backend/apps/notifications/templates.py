@@ -31,6 +31,8 @@ def render(type: str, context: dict | None) -> tuple[str, str]:
         raise ValueError("通知 context 包含不允许的字段")
     title, template = _TEMPLATES[type]
     content = template.format(recruitment_title=context.get("recruitment_title", "招聘"))
+    if type == types.RECRUITMENT_CLOSED and context.get("auto") is False:
+        content = "您的招聘《{}》已手动关闭。".format(context.get("recruitment_title", "招聘"))
     if type == types.APPLICATION_REJECTED and context.get("auto"):
         content += "系统已自动处理。"
     for key, label in (("status_label", "当前状态"), ("reason_label", "原因"), ("link", "站内链接")):
