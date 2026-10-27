@@ -8,7 +8,7 @@
 - 串联隐私确认、严格 multipart 校验、PDF/DOC/DOCX 与 10 MiB 限制、重复投递复核及失败文件清理；申请与发布者通知同事务提交，招募行锁与现有唯一约束共同保护并发投递。
 - 查询在分页前过滤对象归属、有效状态及留存期限；按申请人/发布者关系裁剪姓名、说明、简历元数据和私有标记。无关联管理员无额外读取权限，GET 不清除未读修改。
 - 下载在招募锁、申请锁下复核权限并记录发布者跨用户访问审计；流在事务外传输。统一私有缓存策略，修正空私有目录配置的默认值，隔离提交后邮件派发异常，防止误删已引用文件。
-- 更新 `backend/design_file/api.md`；交接手册见 `Project_Progress_Record/Sprint1_BackEnd/Record/stage_03_handoff.md`，包含功能基线、代码入口、复现步骤及 zf 阶段 4～6 的接续要求。
+- 更新当时的接口正文（现归档为 `backend/design_file/api_before.md`）；交接手册见 `Project_Progress_Record/Sprint1_BackEnd/Record/stage_03_handoff.md`，包含功能基线、代码入口、复现步骤及 zf 阶段 4～6 的接续要求。
 
 ## 验证结果
 

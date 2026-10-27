@@ -82,7 +82,12 @@ class StorageTest(SimpleTestCase):
             with self.assertLogs("apps.files.storage", level="WARNING"):
                 self.assertFalse(discard_resume(path))
         (self.root / "resumes").mkdir(exist_ok=True)
-        (self.root / "resumes" / "escape").symlink_to(self.root.parent, target_is_directory=True)
+        try:
+            (self.root / "resumes" / "escape").symlink_to(self.root.parent, target_is_directory=True)
+        except OSError as error:
+            if getattr(error, "winerror", None) == 1314:
+                self.skipTest("创建符号链接需要 Windows 开发者模式或提升权限")
+            raise
         with self.assertRaises(PermissionError):
             open_resume("resumes/escape/private.pdf")
 

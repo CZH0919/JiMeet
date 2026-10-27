@@ -4,10 +4,12 @@ from rest_framework.parsers import MultiPartParser
 
 from apps.applications import selectors, services
 from apps.applications.serializers import (
+    ApplicationActionSerializer,
     ApplicationDetailSerializer,
     ApplicationQuerySerializer,
     ApplicationSubmitSerializer,
     ApplicationSummarySerializer,
+    ApplicationUpdateSerializer,
     MyApplicationQuerySerializer,
 )
 from apps.core import clock
@@ -60,4 +62,26 @@ class ApplicationDetailView(ApplicationAPIView):
     def get(self, request, application_id):
         now = clock.now()
         application = selectors.get_application(request.user, application_id, now)
+        return ok(ApplicationDetailSerializer(application, context={"user": request.user, "now": now}).data)
+
+    def patch(self, request, application_id):
+        data = validate_data(ApplicationUpdateSerializer, request.data)
+        application = services.modify_application(
+            request.user, application_id,
+            note=data.get("note"), update_note="note" in data, resume=data.get("resume"),
+        )
+        now = clock.now()
+        return ok(ApplicationDetailSerializer(application, context={"user": request.user, "now": now}).data)
+
+
+class ApplicationActionView(PrivateAPIView):
+    action = None
+
+    def post(self, request, application_id):
+        action = self.action
+        data = validate_data(ApplicationActionSerializer, request.data, context={"action": action})
+        application = services.perform_application_action(
+            request.user, application_id, action, **data,
+        )
+        now = clock.now()
         return ok(ApplicationDetailSerializer(application, context={"user": request.user, "now": now}).data)

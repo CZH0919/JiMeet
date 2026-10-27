@@ -22,7 +22,7 @@
 
 已有 10 个业务模型及迁移，公共响应、分页、权限、事务锁、招募状态、简历存储、通知生成和审计工具可复用。HTTP 层目前仅接入账号和健康检查，招募/申请业务服务及接口尚需补齐。现有 173 个测试方法只是源码盘点数量，本次实施前仍须核验运行结果。
 
-主要参考：`backend/design_file/api.md`、`backend/design_file/design_manuscript/database.md`、`backend/apps/recruitments/`、`backend/apps/applications/`。`backend/tests/contract/test_week1_flow.py` 中的流程辅助函数仅作调用参考，不能视为生产服务已完成。
+主要参考：`backend/design_file/api_before.md`（原始 A 阶段接口约定）、`backend/design_file/api.md`（Sprint1 当前接口契约）、`backend/design_file/design_manuscript/database.md`、`backend/apps/recruitments/`、`backend/apps/applications/`。`backend/tests/contract/test_week1_flow.py` 中的流程辅助函数仅作调用参考，不能视为生产服务已完成。
 
 | 事项 | 本次规划采用的基线 |
 | --- | --- |
@@ -86,7 +86,7 @@
 | 代码基线 | 明确仓库、分支、完整提交号、迁移/配置变化；以经过评审的提交为接手基线，保留既有作者与历史。 |
 | 已交付能力 | 按接口列出可调用方法、关键行为、验证结果；标明阶段 4～6 计划接口和已知缺口，不以文档中列出代替实现完成。 |
 | 运行复现 | Python/数据库版本、依赖安装、环境变量、迁移及标签初始化步骤；测试数据创建/重置方式；不提供真实凭据或个人简历。 |
-| 调用契约 | `backend/design_file/api.md` 为接口唯一正文，随实现更新；完成记录引用该文档，避免重复维护不同版本的字段定义。 |
+| 调用契约 | `backend/design_file/api.md` 为当前接口唯一正文，随实现更新；`backend/design_file/api_before.md` 仅存档历史 A 阶段说明。完成记录引用当前正文，避免重复维护不同版本的字段定义。 |
 | 验证证据 | 覆盖发布/投递/查询/下载、文件失败清理、隐私与权限拒绝，包含无关联管理员访问被拒；说明未运行项和原因。 |
 | zf 后续任务 | 对应阶段 4～6 列明依赖、修改位置、复用服务及通过条件；涉及契约变更时记录影响并通知对接成员。 |
 

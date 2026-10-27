@@ -5,8 +5,43 @@ from rest_framework import serializers
 from apps.applications import policies
 from apps.applications.models import Application
 from apps.core.choices import ApplicationStatus
-from apps.core.serializers import QueryIntegerField, StrictCharField, StrictQuerySerializer, StrictSerializer
+from apps.core.serializers import (
+    AwareDateTimeField, QueryIntegerField, StrictCharField, StrictQuerySerializer, StrictSerializer,
+)
 from apps.recruitments.serializers import PublicUserSerializer
+
+
+class ApplicationUpdateSerializer(StrictSerializer):
+    note = StrictCharField(required=False, allow_blank=True)
+    resume = serializers.FileField(required=False, allow_empty_file=True)
+
+    def to_internal_value(self, data):
+        if hasattr(data, "getlist"):
+            repeated = {key: "字段不能重复" for key in data if len(data.getlist(key)) != 1}
+            if repeated:
+                raise serializers.ValidationError(repeated)
+            data = dict(data.items())
+        return super().to_internal_value(data)
+
+    def validate_note(self, value):
+        return value or None
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError("至少提供 note 或 resume")
+        return attrs
+
+
+class ApplicationActionSerializer(StrictSerializer):
+    seen_updated_at = AwareDateTimeField(required=False)
+
+    def validate(self, attrs):
+        action = self.context["action"]
+        if action == "read" and "seen_updated_at" not in attrs:
+            raise serializers.ValidationError({"seen_updated_at": "此字段为必填项"})
+        if action != "read" and "seen_updated_at" in attrs:
+            raise serializers.ValidationError({"seen_updated_at": "仅 read 操作接受此字段"})
+        return attrs
 
 
 class ApplicationSubmitSerializer(StrictSerializer):
