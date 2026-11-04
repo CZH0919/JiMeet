@@ -1,61 +1,58 @@
 # JiMeet 后端接口契约
 
-接口契约：Sprint1｜阶段 4～5 业务接口已交付｜阶段 6 最终回归与交付已完成｜更新日期：2026-10-27
-本文是前后端对接的唯一接口正文。路径相对服务地址，统一加 `/api/v1`，不带末尾斜杠；文件路径相对项目根目录。开发范围与分工遵循已核验的 Sprint1 计划，本文不代替阶段完成记录。
+更新日期：2026-11-04
 
-## 1. 接口状态与交付边界
+本文是前后端对接的统一接口正文。下文接口路径统一以 `/api/v1` 为前缀，不带末尾斜杠；文件路径相对项目根目录。
 
-- **已实现**：当前代码可调用；开发登录还要求开发开关同时开启。
-- **待实现**：目标契约中该方法尚未实现，不能用于真实业务联调；已有路径上的待实现方法返回 405，未注册的路径返回 404。对应阶段完成后再更新状态。
-- **预留**：已注册占位路由，明确返回 501；不属于本次正式认证交付。
+## 1. 接口概览
 
-下表按“HTTP 方法 + 路径”标识接口；同一路径的不同方法分别验收。
+当前提供 31 个可用方法/路径及 2 个返回 501 的 SSO 预留接口。开发登录仅在相应配置开关启用时可用。
 
-| 方法 | 路径 | 状态 | 阶段 / 负责人 |
-| --- | --- | --- | --- |
-| GET | `/healthz` | 已实现 | 1 / ly完成  czh 核验 |
-| GET | `/auth/csrf` | 已实现 | 1 / ly完成  czh 核验 |
-| POST | `/auth/dev-login` | 已实现 | 1 / ly完成  czh 核验 |
-| POST | `/auth/logout` | 已实现 | 1 / ly完成  czh 核验 |
-| GET | `/me` | 已实现 | 1 / ly完成  czh 核验 |
-| PATCH | `/me` | 已实现 | 1 / ly完成 czh 核验 |
-| POST | `/me/privacy-consent` | 已实现 | 1 / ly完成 czh 核验 |
-| GET | `/auth/sso/login` | 预留 | 正式认证后续确定 |
-| GET | `/auth/sso/callback` | 预留 | 正式认证后续确定 |
-| GET | `/tags` | 已实现 | 2 / czh |
-| GET | `/recruitments` | 已实现 | 2 / czh |
-| POST | `/recruitments` | 已实现 | 2 / czh |
-| GET | `/recruitments/{id}` | 已实现 | 2 / czh |
-| PATCH | `/recruitments/{id}` | 已实现 | 2 / czh |
-| DELETE | `/recruitments/{id}` | 已实现 | 2 / czh |
-| POST | `/recruitments/{id}/close` | 已实现 | 2 / czh |
-| GET | `/me/recruitments` | 已实现 | 2 / czh |
-| POST | `/recruitments/{id}/applications` | 已实现 | 3 / czh |
-| GET | `/recruitments/{id}/applications` | 已实现 | 3 / czh |
-| GET | `/me/applications` | 已实现 | 3 / czh |
-| GET | `/applications/{id}` | 已实现 | 3 / czh |
-| GET | `/applications/{id}/resume` | 已实现 | 3 / czh |
-| PATCH | `/applications/{id}` | 已实现 | 4 / zf |
-| POST | `/applications/{id}/withdraw` | 已实现 | 4 / zf |
-| POST | `/applications/{id}/accept` | 已实现 | 4 / zf |
-| POST | `/applications/{id}/reject` | 已实现 | 4 / zf |
-| POST | `/applications/{id}/hold` | 已实现 | 4 / zf |
-| POST | `/applications/{id}/unhold` | 已实现 | 4 / zf |
-| POST | `/applications/{id}/read` | 已实现 | 4 / zf，申请修改已阅确认 |
-| GET | `/notifications` | 已实现 | 5 / zf |
-| GET | `/notifications/unread-count` | 已实现 | 5 / zf |
-| POST | `/notifications/{id}/read` | 已实现 | 5 / zf |
-| POST | `/notifications/read-all` | 已实现 | 5 / zf |
+| 方法 | 路径 | 状态 |
+| --- | --- | --- |
+| GET | `/healthz` | 可用 |
+| GET | `/auth/csrf` | 可用 |
+| POST | `/auth/dev-login` | 仅开发环境 |
+| POST | `/auth/logout` | 可用 |
+| GET | `/me` | 可用 |
+| PATCH | `/me` | 可用 |
+| POST | `/me/privacy-consent` | 可用 |
+| GET | `/auth/sso/login` | 预留（501） |
+| GET | `/auth/sso/callback` | 预留（501） |
+| GET | `/tags` | 可用 |
+| GET | `/recruitments` | 可用 |
+| POST | `/recruitments` | 可用 |
+| GET | `/recruitments/{id}` | 可用 |
+| PATCH | `/recruitments/{id}` | 可用 |
+| DELETE | `/recruitments/{id}` | 可用 |
+| POST | `/recruitments/{id}/close` | 可用 |
+| GET | `/me/recruitments` | 可用 |
+| POST | `/recruitments/{id}/applications` | 可用 |
+| GET | `/recruitments/{id}/applications` | 可用 |
+| GET | `/me/applications` | 可用 |
+| GET | `/applications/{id}` | 可用 |
+| GET | `/applications/{id}/resume` | 可用 |
+| PATCH | `/applications/{id}` | 可用 |
+| POST | `/applications/{id}/withdraw` | 可用 |
+| POST | `/applications/{id}/accept` | 可用 |
+| POST | `/applications/{id}/reject` | 可用 |
+| POST | `/applications/{id}/hold` | 可用 |
+| POST | `/applications/{id}/unhold` | 可用 |
+| POST | `/applications/{id}/read` | 可用 |
+| GET | `/notifications` | 可用 |
+| GET | `/notifications/unread-count` | 可用 |
+| POST | `/notifications/{id}/read` | 可用 |
+| POST | `/notifications/read-all` | 可用 |
 
-阶段 6 不新增业务接口；申请审计补充后的专项与全量回归均已完成，结果和 Windows 跳过项见阶段 6 记录。`/applications/{id}/read` 是“未读修改确认”接口，不是通知已读接口。聊天、推荐、其他用户主页、完整注册/登录页面、回收站和真实邮件发送均不在本文的本次交付范围内。
+`/applications/{id}/read` 用于确认申请修改；通知已读使用 `/notifications/{id}/read` 或 `/notifications/read-all`。
 
-### 1.1 现有代码基线
+正式身份认证、真实邮件投递、聊天、推荐、通用用户主页和软删除恢复暂未提供。
 
-已存在 10 个业务模型及迁移、PostgreSQL 搜索索引、统一响应/错误码/分页、对象权限、招募状态工具、私有文件存储、通知创建与审计。总路由已挂载 `core`、`accounts`、`recruitments`、`applications`、`files` 和 `notifications`；共 31 个已实现方法/路径及 2 个 SSO 占位。阶段 4～6 已完成；分阶段结果及回归限制见 `Project_Progress_Record/Sprint1_BackEnd/Record/stage_04_processing.md`、`stage_05_notifications.md`、`stage_06_delivery.md`。
+### 1.1 运行约定
 
-依赖以 `backend/requirements/base.txt` 为准：Python 3.12+、PostgreSQL 15+，Django 6.1.2、DRF 3.18.3、psycopg 3.3.6。配置从进程环境变量读取，不自动加载 `.env`；变量清单见 `backend/.env.example`。数据库、私有文件目录与凭据按各成员环境配置，个人部署过程不写入接口契约。
+依赖见 `backend/requirements/base.txt`：Python 3.12+、PostgreSQL 15+，Django 6.1.2、DRF 3.18.3、psycopg 3.3.6。配置从进程环境变量读取，不自动加载 `.env`；变量清单见 `backend/.env.example`。
 
-已有命令：`seed_tags`、`run_sync_recruitments`。`run_send_emails`、`run_purge_applications`、`run_cleanup_orphan_files`、`run_cleanup_audit_logs` 目前显式报 `CommandError: reserved`；不得把占位命令视为已完成任务。邮件 `dispatch` 仅记录日志。
+`seed_tags` 初始化标签；`run_sync_recruitments` 补执行到期关闭与七天自动拒绝，需要独立调用或调度。邮件发送与留存物理清理命令仍为预留，调用返回 `CommandError: reserved`；邮件 `dispatch` 仅记录日志。
 
 ## 2. 通用契约
 
@@ -66,7 +63,9 @@
 - JSON 字段使用 `snake_case`。用户仅暴露 32 位十六进制 `uid`；招募、申请、通知、标签使用正整数 `id`。不输出用户数据库主键、`real_id`、认证标识、私有文件路径或邮箱等无关身份信息。
 - 时间为带时区的 ISO 8601 字符串，例如 `2026-11-15T18:00:00+08:00`，客户端按时间点解析；不能依赖固定时区文本。截止边界以服务端时间为准。
 - 下文“省略字段”与值为 `null` 不同：无权读取的字段省略；有权读取但没有值的字段返回 `null`。列表无结果返回空数组。
-- 目标业务接口拒绝未声明、只读的请求字段；JSON 人数及 ID 接受整数，拒绝布尔值、浮点数和数字字符串。查询参数按声明解析；未知或重复查询键返回 400。请求路径中的不存在资源返回 404。
+- 声明输入字段的接口拒绝未知、只读字段。JSON 人数及资源 ID 接受整数，拒绝布尔值、浮点数和数字字符串；具体字段约束见各接口。
+- `/me`、标签、招募、申请、私有简历和通知接口采用严格查询校验：未知或重复键返回 400。健康检查、会话辅助及 SSO 预留接口不使用查询参数。
+- 资源不存在或对当前用户不可见时返回 404，具体删除与留存边界见对应接口。
 
 ### 2.2 响应信封与分页
 
@@ -121,7 +120,7 @@
 | APPLICATION_NOT_PROCESSING | 409 | 申请已不是处理中，不能执行该状态操作 |
 | INVALID_RESUME_FILE | 400 | 文件校验失败；`data.details.reason` 为 `type`、`size` 或 `signature` |
 | INTERNAL_ERROR | 500 / 501 / 503 | 内部异常 / 已注册的功能占位 / 健康检查数据库不可用 |
-| SSO_UNAVAILABLE | 503 | 正式 SSO 故障预留码，本阶段不使用 |
+| SSO_UNAVAILABLE | 503 | 正式 SSO 故障预留码，当前不使用 |
 
 400 示例：
 
@@ -142,7 +141,7 @@
 
 前端统一请求相对路径 `/api/v1/...`，由前端开发服务器代理至配置的后端服务，不在页面中硬编码后端地址。代理保留路径、`Host`、`Origin` 和 Cookie，并原样转发 `Set-Cookie`；代理目标通过环境配置指定。
 
-前端尚未建工程；以下仅为选用 Vite 时的配置参考，应合入前端自己的配置，不在本阶段新建前端项目：
+使用 Vite 开发代理时，可将以下配置合入前端工程：
 
 ```javascript
 import { defineConfig, loadEnv } from 'vite';
@@ -168,7 +167,7 @@ export default defineConfig(({ mode }) => {
 
 `DEV_API_TARGET` 只供开发服务器使用，不是浏览器请求前缀。浏览器通过同一前端 origin 完成全部调用；本机开发固定使用同一种主机名，不在 `localhost` 和 IP 地址之间切换会话。现有开发配置允许本机主机名，其他部署主机另行配置。
 
-保留 Host 后，浏览器 Origin 与 Django 看到的请求 origin 一致，通常无需 `CSRF_TRUSTED_ORIGINS`。若代理必须改写 Host，则后端应仅将实际前端 origin（含协议与端口）加入该环境变量；重启后端使配置生效。**仅配置 CSRF 信任来源不等于启用 CORS**。本次采用同源代理，不引入跨域中间件、不关闭 CSRF；正式部署的 HTTPS 与代理配置届时另行核验。
+保留 Host 后，浏览器 Origin 与 Django 看到的请求 origin 一致，通常无需 `CSRF_TRUSTED_ORIGINS`。若代理必须改写 Host，则后端应仅将实际前端 origin（含协议与端口）加入该环境变量；重启后端使配置生效。**仅配置 CSRF 信任来源不等于启用 CORS**。同源代理保留 CSRF 保护；跨域部署需另外配置 CORS，生产环境还需核验 HTTPS 与代理设置。
 
 参考：[Vite 开发代理](https://vite.dev/config/server-options#server-proxy)、[Django CSRF 来源校验](https://docs.djangoproject.com/en/6.1/ref/csrf/)。
 
@@ -182,7 +181,7 @@ export default defineConfig(({ mode }) => {
 
 `sessionid` 为 HttpOnly Cookie，前端不读取、不复制到请求体或本地存储；`fetch` 使用 `credentials: 'same-origin'`。接口返回的 masked CSRF token 和当前 `csrftoken` Cookie 值均可用于请求头，但登录前的旧令牌不可继续使用。实际规则见 [Django CSRF 文档](https://docs.djangoproject.com/en/6.1/ref/csrf/)。
 
-浏览器调用示例（此处只调用已实现接口）：
+浏览器调用示例：
 
 ```javascript
 const API_BASE = '/api/v1';
@@ -223,7 +222,7 @@ async function confirmPrivacyConsent() {
 }
 ```
 
-## 4. 已实现接口
+## 4. 基础与账号接口
 
 ### 4.1 GET /healthz（公开）
 
@@ -235,7 +234,7 @@ async function confirmPrivacyConsent() {
 
 ### 4.3 POST /auth/dev-login（公开，仅开发环境）
 
-请求为 JSON；仅 `DEBUG` 与 `ALLOW_DEV_LOGIN` 同时为真时可用，匿名登录也强制校验 CSRF。首次使用编号自动创建开发身份，重复使用同一编号复用账号；这不代表已实现正式自由注册或学校 SSO。
+请求为 JSON；仅 `DEBUG` 与 `ALLOW_DEV_LOGIN` 同时为真时可用，匿名登录也强制校验 CSRF。首次使用编号自动创建开发身份，重复使用同一编号复用账号；该入口仅用于开发身份联调。
 
 | 字段 | 必填 | 约束 |
 | --- | --- | --- |
@@ -248,6 +247,8 @@ async function confirmPrivacyConsent() {
 200 返回本人资料，与 `GET /me` 相同；已有账号再次登录不借请求字段修改资料。管理员测试身份由受控后台配置，不接受前端提交 `is_admin`。
 
 ### 4.4 GET /me、PATCH /me
+
+`GET /me`、`PATCH /me` 均不接受 URL 查询参数。通过会话认证（写请求还需 CSRF 校验）后，未知或重复查询键返回 400 `VALIDATION_ERROR`，不执行资料更新。两种请求的响应均设置 `Cache-Control: private, no-store`。
 
 `GET /me`：200 返回本人资料。字段集合如下：
 
@@ -264,7 +265,7 @@ async function confirmPrivacyConsent() {
 }
 ```
 
-`PATCH /me` 接受 JSON 中的 `nickname`、`email_notify_enabled`，可只提供一项；当前实现允许 `{}` 原样返回资料。昵称去首尾空白后为 1～32 字；通知开关必须是 JSON 布尔值，字符串、数字及 `null` 不接受。只读字段与未知字段返回 400，成功返回更新后的本人资料。
+`PATCH /me` 仅接受 `application/json` 请求体中的 `nickname`、`email_notify_enabled`，可只提供一项；允许 `{}` 原样返回资料。昵称去首尾空白后为 1～32 字；通知开关必须是 JSON 布尔值，字符串、数字及 `null` 不接受。只读字段与未知字段返回 400，成功返回更新后的本人资料。
 
 `name`、`email` 只用于本人资料；招募发布者按业务关系可见的申请人姓名另按第 6 节裁剪，不能据此提供通用用户隐私查询接口。`email_notify_enabled=false` 不影响站内通知，真实邮件发送仍未接入。
 
@@ -274,15 +275,15 @@ async function confirmPrivacyConsent() {
 
 ### 4.6 GET /auth/sso/login、GET /auth/sso/callback（预留）
 
-当前均返回 501，`code=INTERNAL_ERROR`、`message="预留"`、`data=null`。正式认证方案尚未确定，本次前端联调使用开发身份。
+当前均返回 501，`code=INTERNAL_ERROR`、`message="预留"`、`data=null`。正式认证尚未接入，开发联调使用开发登录入口。
 
-## 5. 招募接口（阶段 2，已实现）
+## 5. 招募接口
 
 ### 5.1 标签与枚举
 
 `GET /tags` 返回 200、`data={"items":[{"id":1,"name":"计算机"}]}`。仅返回启用标签，按 `sort_order, id` 升序，不分页；已有招募引用的停用标签仍可显示名称。
 
-招募类型沿用现有模型：`competition`（竞赛）、`activity`（活动）、`internship`（实验室实习）。招募状态为 `open`（进行中）、`full`（已满员）、`closed`（已关闭）；删除由 `is_deleted` / `deleted_at` 表示，不新增第四种数据库状态。
+招募类型为：`competition`（竞赛）、`activity`（活动）、`internship`（实验室实习）。招募状态为 `open`（进行中）、`full`（已满员）、`closed`（已关闭）；删除状态由 `is_deleted` / `deleted_at` 表示。
 
 ### 5.2 招募请求字段
 
@@ -296,7 +297,7 @@ async function confirmPrivacyConsent() {
 | tag_ids | 必填 | 非空、不重复的正整数数组；每项须为当前启用标签 ID |
 | min_headcount | 可省略，默认 null | null 或正整数，非空时须不大于 max_headcount |
 | max_headcount | 必填 | 1～50 的整数；更新后不得低于 accepted_count |
-| deadline | 必填 | 带时区；严格晚于操作时刻，且不晚于该时刻加一个日历年，闰日按既有规则处理 |
+| deadline | 必填 | 带时区；严格晚于操作时刻，且不晚于该时刻加一个日历年，闰日回退至次年的 2 月 28 日 |
 
 PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount=null` 清空下限，省略则不变。`tag_ids` 提交后整体替换，省略则保留，包括已有的停用标签关联。不得提交 `publisher`、`accepted_count`、`status`、`deleted_at` 等只读字段。
 
@@ -316,7 +317,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 ### 5.3 招募响应字段
 
-下述类型名用于描述 JSON 结构，不是新增数据库模型。
+下述类型名用于描述响应 JSON 结构。
 
 | 数据结构 | 字段 |
 | --- | --- |
@@ -382,11 +383,11 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 对象可见但非发布者编辑/关闭为 403；窗口不允许为 409 `RECRUITMENT_NOT_EDITABLE`。人数上限低于已接受人数为 409 `HEADCOUNT_BELOW_ACCEPTED`；等于时在同一事务进入 full 并拒绝其余处理中申请。重复删除已删除对象为 404，重复关闭已关闭对象为 409，不重复生成通知。
 
-保留原有软删除：`deleted_at` 置为删除时间，`processing/accepted` 申请转为 `invalid`，已拒绝、已撤回不变，历史接受人数保留；不提供恢复功能。修改、关闭、删除的相关通知和审计按既有规则在事务中维护。
+软删除规则：`deleted_at` 置为删除时间，`processing/accepted` 申请转为 `invalid`，已拒绝、已撤回不变，历史接受人数保留；不提供恢复功能。
 
-**通知接收范围（已确认）：** 招募修改或删除只通知变更前仍为 processing/accepted 的申请人，已撤回或已拒绝者不再通知。调低人数上限触发满员时，相关申请人收到招募变更通知，剩余处理中申请另收到自动拒绝结果。管理员删除还向发布者发送治理删除通知；手动关闭向发布者发送明确的手动关闭通知，不立即拒绝已有申请。删除审计、通知及业务变更同事务提交，权限拒绝沿用公共审计处理。
+**通知接收范围：** 招募修改或删除只通知变更前仍为 processing/accepted 的申请人，已撤回或已拒绝者不再通知。调低人数上限触发满员时，相关申请人收到招募变更通知，剩余处理中申请另收到自动拒绝结果。管理员删除还向发布者发送治理删除通知；手动关闭向发布者发送明确的手动关闭通知，不立即拒绝已有申请。删除审计、通知及业务变更同事务提交，权限拒绝沿用公共审计处理。
 
-## 6. 申请与私有简历契约（阶段 3 已实现，阶段 4 已实现）
+## 6. 申请与私有简历接口
 
 ### 6.1 状态与数据结构
 
@@ -398,7 +399,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 | ApplicationSummary | `id`、`recruitment: RecruitmentReference`、`applicant: PublicUser`、`status`、`created_at`、`updated_at`、`decided_at`（可空）、`permissions`；发布者另按权限获得 `applicant.name`、`publisher_mark`、`has_unseen_update` |
 | ApplicationDetail | Summary 全部字段，加按权限裁剪的 `note`（可空）、`resume: {name, size, type}`；size 为字节数，type 为 pdf/doc/docx |
 
-列表不返回 `note` 或简历元数据。文件名来自服务端清洗结果，最多 255 个 UTF-8 字节；不返回存储路径或公开下载链接。`permissions` 含 `can_modify`、`can_withdraw`、`can_process`、`can_download_resume`；当前状态和身份不满足时为 false。这些值表达业务操作条件；调用时仍须遵守第 1 节所列接口状态及业务约束。
+列表不返回 `note` 或简历元数据。文件名来自服务端清洗结果，最多 255 个 UTF-8 字节；不返回存储路径或公开下载链接。`permissions` 含 `can_modify`、`can_withdraw`、`can_process`、`can_download_resume`；当前状态和身份不满足时为 false。这些值用于前端操作展示，写请求仍由服务端重新校验。
 
 申请查询同样按服务端当前时刻解释状态：若数据库仍为 processing，但已到关闭后七天边界，响应应表现为 rejected，`decided_at` 为该边界时刻，修改/撤回/处理权限均为 false；不能直接用尚未补执行的数据库值生成按钮。该有效状态用于列表筛选、详情及状态统计，持久化和通知仍由状态补执行负责。
 
@@ -413,7 +414,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 申请人读取本人姓名使用 `/me`，不额外放宽申请对象的姓名字段策略。管理员本人恰为发布者或申请人时按该业务关系处理。撤回/失效后的简历限制同时适用于双方；已关闭招募或已拒绝申请不单独触发禁读。
 
-详情 `data` 示例：发布者查看仍在处理窗口内的申请；`has_unseen_update=true` 表示已有修改标记，申请修改接口已由阶段 4 交付，新提交默认为 false。
+详情 `data` 示例：发布者查看仍在处理窗口内的申请；`has_unseen_update=true` 表示已有修改标记，新提交的该标记默认为 false。
 
 ```json
 {
@@ -444,7 +445,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 }
 ```
 
-### 6.2 投递、列表、详情与下载（阶段 3，已实现）
+### 6.2 投递、列表、详情与下载
 
 | 接口 | 输入 / 权限 | 成功 data |
 | --- | --- | --- |
@@ -462,7 +463,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 下载成功使用 `Content-Disposition: attachment` 和清洗后的文件名；Content-Type 分别为 `application/pdf`、`application/msword`、`application/vnd.openxmlformats-officedocument.wordprocessingml.document`。对象不可见返回 404；关系合法但 withdrawn/invalid 不可下载时返回 403；文件实际缺失返回 404，不暴露物理路径。发布者读取他人简历写审计，文件流仍携带请求 ID；敏感详情和下载响应须使用 `Cache-Control: private, no-store`。
 
-上传示例（已可调用）：
+上传示例：
 
 ```javascript
 const form = new FormData();
@@ -476,7 +477,7 @@ const response = await fetch(`/api/v1/recruitments/${recruitmentId}/applications
 // 不手写 Content-Type；由浏览器生成 multipart boundary。
 ```
 
-### 6.3 修改、撤回与处理（阶段 4，已实现）
+### 6.3 修改、撤回与处理
 
 `PATCH /applications/{id}` 使用 multipart，接受可选的 `note`、`resume`，至少提供一项。省略的字段不变，空字符串 note 清空说明，文件不能通过空值删除。仅申请人本人在申请仍为 processing 且招募未删除时可修改。成功 200 返回 ApplicationDetail，置未读修改标记并通知发布者；旧文件在事务成功提交后才清理，失败保留原文件。
 
@@ -499,9 +500,7 @@ hold/unhold 在仍满足操作条件且标记已是目标值时返回当前记�
 
 **未读修改确认**：`GET /applications/{id}` 及列表不清除 `has_unseen_update`。发布者展示详情后显式调用 `POST /applications/{id}/read`，JSON 必填 `{"seen_updated_at":"2026-10-26T10:00:00+08:00"}`，使用刚读取详情的 `updated_at`。写服务在锁内比较时间点：版本一致才清除标记；期间出现新修改则保留标记，并返回当前详情供刷新。仅该确认不改变内容版本时间；重复确认无额外副作用。仍须遵守对象可见性及私有标记权限，withdrawn/invalid 不可确认。
 
-此约定落实计划中的未读确认职责；旧实现草案中“GET 详情顺带清标记”的建议不作为实现依据，正式 HTTP 契约以本文为准。阶段 3 先交付读取，阶段 4 已交付显式确认写接口。
-
-## 7. 通知目标契约（阶段 5，已实现）
+## 7. 通知接口
 
 Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（可空）、`application_id`（可空）、`is_read`、`created_at`。不返回接收人邮箱、私有文件信息、简历内容或申请人的完整身份；客户端跳转目标仍受目标接口的权限校验。
 
@@ -514,9 +513,9 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 
 无权读取或修改他人的通知返回 404；`is_read` 空值、数字或其他字符串为 400。列表、未读数及标记操作采用一致的可见范围；到达申请留存期限的关联通知不再返回，也不计入未读数，不依赖物理清理任务是否已执行。标记全部已读不包括该操作完成后才新建的通知。
 
-通知 type 沿用 `backend/apps/notifications/types.py`：`application_submitted`、`application_accepted`、`application_rejected`、`application_withdrawn`、`application_updated`、`recruitment_closed`、`recruitment_updated`、`recruitment_deleted`、`admin_removed`。应用列表/通知列表的读取不会自动标记通知已读。
+通知 type 沿用 `backend/apps/notifications/types.py`：`application_submitted`、`application_accepted`、`application_rejected`、`application_withdrawn`、`application_updated`、`recruitment_closed`、`recruitment_updated`、`recruitment_deleted`、`admin_removed`。读取申请列表或通知列表不会自动标记通知已读。
 
-## 8. 状态、事务与对接验收
+## 8. 状态与一致性规则
 
 ### 8.1 时间与删除边界
 
@@ -526,30 +525,10 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 - 留存期从 `closed_at`、`full_at`、`deleted_at` 最早的非空时间起算 180 天，后续操作不重新计时。到期即禁止申请明细、简历及关联通知访问；物理清理仍属预留工作。
 - 读取不得清除未读标记。时间到期的展示状态、权限与筛选应一致；数据库状态补执行和通知由既有状态工具在写操作或同步命令中完成。
 
-### 8.2 事务与对接约束
+### 8.2 事务与资源一致性
 
-新建招募使用独立事务保存招募与标签；已有招募及申请的写操作复用 `run_in_recruitment_tx`，不外包一层大事务，按招募锁 → 申请锁顺序执行。状态、人数、站内通知与审计在所属业务事务中保持一致；文件校验暂存位于事务外，失败清理新文件，成功后清理被替换旧文件。
+新建招募与标签关联原子保存。已有招募及申请的写操作先独立提交必要的到期状态补执行，再按招募锁、申请锁的顺序执行业务事务。业务校验失败不撤销已提交的到期状态；状态、人数及产生的通知和审计随业务事务提交或回滚。
 
-读取与写入均复用对象权限，禁止通过前端隐藏按钮代替校验。申请详情、元数据与下载权限一致；响应结构以本文件为准，禁止直接将模型全字段序列化。后续契约变更应同步更新接口状态、请求/响应示例及阶段记录。
+申请提交先检查身份与隐私确认，再校验并暂存文件；业务失败清理新文件，简历替换提交成功后才尝试清理旧文件。提交后的邮件调度异常仅记录日志，不回滚已提交申请、简历引用或待发邮件记录。
 
-### 8.3 阶段 1 的验证边界
-
-本阶段验证现有路由、响应信封、开发身份自动建号、登录后令牌轮换、会话退出、隐私确认幂等、字段拒绝及代理 Host/Origin 下的 CSRF 行为；目标接口的字段、权限、状态、错误码为后续阶段实现和回归依据。前端工程尚未建立，代理请求头验证不代表实际浏览器联调已完成。
-
-已有测试集从 `backend/` 执行：`python manage.py test tests --keepdb --noinput --settings=config.settings.test`；使用项目专用测试数据库，不能指向正式或其他项目数据库。正式阶段完成情况写入 `Project_Progress_Record/Sprint1_BackEnd/Record/`，此处不维护个人部署记录。
-
-### 8.4 阶段 2 实现与接入
-
-招募代码按 `services.py`、`selectors.py`、`serializers.py`、`views.py`、`urls.py` 分层；通用严格字段校验位于 `backend/apps/core/serializers.py`。复用原有模型与迁移，不增加运行时依赖。
-
-前端可依次使用开发身份登录、读取标签、发布招募、列表筛选、详情、修改、关闭、删除和“我的招募”。第 3.2 节的 `api` 调用函数可用于这些 JSON 请求；POST 成功返回 201，其他成功响应为 200。
-
-### 8.5 阶段 3 实现与接续
-
-申请提交、本人/发布者列表、详情由 `backend/apps/applications/` 分层实现，受控下载位于 `backend/apps/files/services.py` 与 `views.py`。招募、申请及文件接口复用 `backend/apps/core/views.py` 的输入校验和私有缓存策略；无新增迁移或运行时依赖。
-
-提交先检查身份与隐私确认，再于事务外校验、暂存文件；在招募锁内复核窗口、重复申请并原子创建申请和发布者通知。失败清理新文件；提交后的邮件派发异常仅记录错误，保留已提交申请、文件与待发送记录，真实邮件发送仍未实现。
-
-查询在分页前过滤归属及留存期限，列表与详情使用相同时间状态投影。下载先按招募锁 → 申请锁复核权限，再打开文件并记录发布者访问审计；流式传输在事务外进行。GET 不清除申请未读标记，也不代替状态同步命令。
-
-中期接续与可复现 HTTP 步骤见 `Project_Progress_Record/Sprint1_BackEnd/Record/stage_03_handoff.md`。阶段 4～6 的接口、并发处理与最终验收已完成；分阶段交付与回归结果见 `Project_Progress_Record/Sprint1_BackEnd/Record/stage_04_processing.md`、`stage_05_notifications.md`、`stage_06_delivery.md`。
+列表在分页前过滤对象归属及留存期限，与详情使用相同的时间状态投影。简历下载在短事务内复核权限、打开文件并记录发布者查看审计，文件传输在事务外进行。GET 请求不代替状态同步或显式已读操作。

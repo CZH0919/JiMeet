@@ -7,6 +7,19 @@ from apps.notifications.selectors import list_notifications, visible_notificatio
 
 
 def mark_notification_read(*, user, notification_id: int, now):
+    """将本人可见的一条通知标为已读。
+
+    Args:
+        user: 已认证接收者。
+        notification_id: 通知主键。
+        now: 判断留存可见性的时间点。
+
+    Returns:
+        Notification: 事务提交后的通知对象；重复调用不重复写入。
+
+    Raises:
+        NotFound: 通知不存在、不属于本人或已不可见。
+    """
     with transaction.atomic():
         notification = (
             visible_notifications(user, now)
@@ -23,5 +36,14 @@ def mark_notification_read(*, user, notification_id: int, now):
 
 
 def mark_all_notifications_read(*, user, now) -> int:
+    """将本人当前可见的未读通知批量标为已读。
+
+    Args:
+        user: 已认证接收者。
+        now: 判断留存可见性的时间点。
+
+    Returns:
+        int: 本次实际更新数量；重复调用且无新通知时为 0。
+    """
     with transaction.atomic():
         return list_notifications(user=user, now=now, is_read=False).update(is_read=True)

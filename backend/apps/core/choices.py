@@ -3,67 +3,33 @@ from django.db import models
 
 
 class Role(models.TextChoices):
-    """
-    系统中可能的用户角色。
-
-    ### Attributes
-    - `STUDENT`: 学生角色，值为 "student"
-    - `TEACHER`: 教师角色，值为 "teacher"
-    """
+    """用户身份枚举：学生或教师；与管理员标记独立。"""
     STUDENT = "student", "学生"
     TEACHER = "teacher", "教师"
 
 
 class RecruitmentType(models.TextChoices):
-    """
-    系统中可能的招聘类型。
-
-    ### Attributes
-    - `COMPETITION`: 竞赛类型，值为 "competition"
-    - `ACTIVITY`: 活动类型，值为 "activity"
-    - `INTERNSHIP`: 实习类型，值为 "internship"
-    """
+    """招募类型枚举：竞赛、活动或实习。"""
     COMPETITION = "competition", "竞赛"
     ACTIVITY = "activity", "活动"
     INTERNSHIP = "internship", "实习"
 
 
 class RecruitmentStatus(models.TextChoices):
-    """
-    系统中可能的招聘状态。
-
-    ### Attributes
-    - `OPEN`: 开放状态，值为 "open"
-    - `FULL`: 满员状态，值为 "full"
-    - `CLOSED`: 已关闭状态，值为 "closed"
-    """
+    """招募状态枚举：开放、满员或关闭；删除由 deleted_at 单独表示。"""
     OPEN = "open", "开放"
     FULL = "full", "满员"
     CLOSED = "closed", "已关闭"
 
 
 class CloseReason(models.TextChoices):
-    """
-    系统中可能的关闭原因。
-    ### Attributes
-    - `DEADLINE`: 到期关闭，值为 "deadline"
-    - `MANUAL`: 手动关闭，值为 "manual"
-    """
+    """招募首次关闭的原因枚举。"""
     DEADLINE = "deadline", "到期"
     MANUAL = "manual", "手动"
 
 
 class ApplicationStatus(models.TextChoices):
-    """
-    系统中可能的应用状态。
-
-    ### Attributes
-    - `PROCESSING`: 处理中，值为 "processing"
-    - `ACCEPTED`: 已接受，值为 "accepted"
-    - `REJECTED`: 已拒绝，值为 "rejected"
-    - `WITHDRAWN`: 已撤回，值为 "withdrawn"
-    - `INVALID`: 已失效，值为 "invalid"
-    """
+    """申请状态枚举；暂留使用独立的发布者标记。"""
     PROCESSING = "processing", "处理中"
     ACCEPTED = "accepted", "已接受"
     REJECTED = "rejected", "已拒绝"
@@ -72,38 +38,20 @@ class ApplicationStatus(models.TextChoices):
 
 
 class PublisherMark(models.TextChoices):
-    """
-    定义了系统中可能的发布者标记
-    ### Attributes
-    - `NONE`: 无标记，值为 "none"
-    - `HOLD`: 暂留标记，值为 "hold"
-    """
+    """发布者私有标记枚举，不改变申请状态。"""
     NONE = "none", "无"
     HOLD = "hold", "暂留"
 
 
 class ResumeType(models.TextChoices):
-    """
-    所有可能的简历文件格式
-
-    ### Attributes
-    - `PDF`: PDF格式，值为 "pdf"
-    - `DOC`: DOC格式，值为 "doc"
-    - `DOCX`: DOCX格式，值为 "docx"
-    """
+    """受支持的简历格式枚举。"""
     PDF = "pdf", "PDF"
     DOC = "doc", "DOC"
     DOCX = "docx", "DOCX"
 
 
 class EmailStatus(models.TextChoices):
-    """
-    系统中可能的邮件发送状态。
-    ### Attributes
-    - `PENDING`: 待发送状态，值为 "pending"
-    - `SENT`: 已发送状态，值为 "sent"
-    - `FAILED`: 发送失败状态，值为 "failed"
-    """
+    """邮件发送记录状态枚举；真实投递尚未实现。"""
     PENDING = "pending", "待发送"
     SENT = "sent", "已发送"
     FAILED = "failed", "发送失败"

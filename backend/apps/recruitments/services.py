@@ -18,11 +18,30 @@ ACTIVE_APPLICATION_STATUSES = (ApplicationStatus.PROCESSING, ApplicationStatus.A
 
 
 def _require_user(user):
+    """要求操作者具有已认证身份。
+
+    Args:
+        user: 当前操作者，可为 None 或匿名用户。
+
+    Raises:
+        NotAuthenticated: 用户未认证。
+    """
     if not user or not user.is_authenticated:
         raise NotAuthenticated()
 
 
 def _authorize(user, recruitment, *, allow_admin=False):
+    """检查招募未删除及操作者的对象权限。
+
+    Args:
+        user: 已认证操作者。
+        recruitment: 待操作招募。
+        allow_admin: 是否允许管理员，默认 False。
+
+    Raises:
+        NotFound: 招募已删除。
+        Forbidden: 不是发布者，也不满足允许的管理员条件。
+    """
     if recruitment.deleted_at is not None:
         raise NotFound("招募不存在")
     if user.pk != recruitment.publisher_id and not (allow_admin and user.is_admin):
@@ -30,7 +49,18 @@ def _authorize(user, recruitment, *, allow_admin=False):
 
 
 def _preflight(user, recruitment_id, *, allow_admin=False):
-    """补执行前先拒绝无权用户；业务事务加锁后仍须再次检查。"""
+    """在状态补执行前拒绝无权操作者，不获取行锁。
+
+    业务事务获取招募锁后仍须重新检查对象权限。
+
+    Args:
+        user: 当前操作者。
+        recruitment_id: 招募主键。
+        allow_admin: 是否放行管理员，默认 False。
+
+    Raises:
+        BizError: 未认证、招募不存在或已删除，或对象权限不足。
+    """
     _require_user(user)
     try:
         recruitment = Recruitment.objects.only("id", "publisher_id", "deleted_at").get(pk=recruitment_id)
@@ -40,7 +70,17 @@ def _preflight(user, recruitment_id, *, allow_admin=False):
 
 
 def _active_tags(tag_ids):
-    """事务内按固定顺序锁标签，防止写入时标签被并发停用。"""
+    """在当前事务内按主键顺序锁定启用标签。
+
+    Args:
+        tag_ids: 非空、去重的标签主键序列。
+
+    Returns:
+        list[Tag]: 已锁定的启用标签。
+
+    Raises:
+        ValidationFailed: 列表为空、含重复值，或含不存在/停用标签。
+    """
     tags = list(Tag.objects.select_for_update().filter(pk__in=tag_ids, is_active=True).order_by("pk"))
     if not tag_ids or len(tags) != len(tag_ids):
         raise ValidationFailed(details={"tag_ids": "须选择不重复且已启用的标签"})
@@ -48,6 +88,14 @@ def _active_tags(tag_ids):
 
 
 def _replace_tags(recruitment, tags):
+    """将招募标签关联调整为给定集合。
+
+    保留仍需要的关联，删除多余关联并补齐缺失项。
+
+    Args:
+        recruitment: 当前事务中的招募。
+        tags: 已校验并锁定的标签序列。
+    """
     wanted = {tag.pk for tag in tags}
     links = RecruitmentTag.objects.filter(recruitment=recruitment)
     links.exclude(tag_id__in=wanted).delete()
@@ -58,6 +106,17 @@ def _replace_tags(recruitment, tags):
 
 
 def _active_applications(recruitment):
+    """锁定变更前仍有效的申请，供通知和失效处理使用。
+
+    Args:
+        recruitment: 当前事务已加锁的招募。
+
+    Returns:
+        list[Application]: 按主键排序的 processing/accepted 申请，预加载申请人。
+
+    Raises:
+        RuntimeError: 没有当前事务的有效招募锁。
+    """
     tx.assert_recruitment_locked(recruitment)
     return list(
         Application.objects.select_for_update(of=("self",)).select_related("applicant")
@@ -66,6 +125,15 @@ def _active_applications(recruitment):
 
 
 def _notify_applicants(recruitment, applications, notification_type):
+    """为指定申请集合写入关联招募通知。
+
+    必须在业务事务内调用；接收范围由调用方决定。
+
+    Args:
+        recruitment: 关联招募。
+        applications: 已按通知接收范围筛选的申请序列。
+        notification_type: 通知类型常量。
+    """
     for application in applications:
         notify(
             recipient=application.applicant, type=notification_type,
@@ -74,7 +142,20 @@ def _notify_applicants(recruitment, applications, notification_type):
 
 
 def create_recruitment(user, *, data: dict):
-    """保存已通过输入序列化器校验的数据；招募与标签失败时整体回滚。"""
+    """创建招募及标签关联，任一写入失败时整体回滚。
+
+    Args:
+        user: 已认证发布者，学生与教师使用相同规则。
+        data: 经 RecruitmentWriteSerializer 校验的数据，须含标题、类型、描述、人数上限、截止时间和 tag_ids。
+
+    Returns:
+        Recruitment: 已提交的新招募。
+
+    Raises:
+        NotAuthenticated: 用户未认证。
+        ValidationFailed: 截止时间、人数或标签不合法。
+        RuntimeError: 调用方已在事务内。
+    """
     _require_user(user)
     tx.assert_not_in_atomic()
     with transaction.atomic():
@@ -89,7 +170,22 @@ def create_recruitment(user, *, data: dict):
 
 
 def update_recruitment(user, recruitment_id: int, *, data: dict):
-    """合并部分字段后校验；满员变更与关联申请处理在同一业务事务提交。"""
+    """修改开放窗口内的招募，并原子更新关联状态和通知。
+
+    先独立提交到期补执行。更新通知只发给变更前 processing/accepted 申请人；人数上限降至已接受人数时进入 full 并拒绝其余处理中申请。
+
+    Args:
+        user: 招募发布者。
+        recruitment_id: 招募主键。
+        data: 已校验的非空部分更新字段，未提供的字段保持原值。
+
+    Returns:
+        Recruitment: 业务事务提交后的招募对象。
+
+    Raises:
+        BizError: 未认证、对象不可见、非发布者、不可编辑，或人数/时间/标签校验失败。
+        RuntimeError: 调用方已在事务内。
+    """
     _preflight(user, recruitment_id)
 
     def update(locked, now):
@@ -119,7 +215,19 @@ def update_recruitment(user, recruitment_id: int, *, data: dict):
 
 
 def close_recruitment(user, recruitment_id: int):
-    """发布者手动关闭；已有申请保留七天处理窗口，不立即拒绝。"""
+    """由发布者手动关闭招募，保留已有申请的七天处理窗口。
+
+    Args:
+        user: 招募发布者。
+        recruitment_id: 招募主键。
+
+    Returns:
+        Recruitment: 已提交的关闭状态对象。
+
+    Raises:
+        BizError: 未认证、对象不可见、非发布者或招募已不允许关闭。
+        RuntimeError: 调用方已在事务内。
+    """
     _preflight(user, recruitment_id)
 
     def close(locked, now):
@@ -140,7 +248,22 @@ def close_recruitment(user, recruitment_id: int):
 
 
 def delete_recruitment(user, recruitment_id: int, *, reason: str | None = None):
-    """软删除并使有效申请失效；状态、通知及删除审计原子提交。"""
+    """软删除招募，并原子提交有效申请失效、通知和审计。
+
+    processing/accepted 转为 invalid；已接受申请的首次决定时间和历史接受人数保持不变。
+
+    Args:
+        user: 发布者或业务管理员；发布者受编辑窗口限制。
+        recruitment_id: 招募主键。
+        reason: 删除原因，默认 None；管理员必须提供非空原因。
+
+    Returns:
+        None: 保留招募及申请历史，不物理删除简历。
+
+    Raises:
+        BizError: 未认证、对象不可见、权限或操作窗口不足，或管理员未填写原因。
+        RuntimeError: 调用方已在事务内。
+    """
     _preflight(user, recruitment_id, allow_admin=True)
     if user.is_admin and not (reason and reason.strip()):
         raise ValidationFailed(details={"reason": "管理员删除必须填写原因"})

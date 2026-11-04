@@ -31,11 +31,33 @@ class RecruitmentWriteSerializer(StrictSerializer):
     deadline = AwareDateTimeField()
 
     def validate_tag_ids(self, value):
+        """拒绝重复标签主键。
+
+        Args:
+            value: 已通过整数范围校验的非空 ID 列表。
+
+        Returns:
+            list[int]: 原标签列表，启用状态由写服务在事务内校验。
+
+        Raises:
+            ValidationError: 标签主键重复。
+        """
         if len(value) != len(set(value)):
             raise serializers.ValidationError("标签不能重复")
         return value
 
     def validate(self, attrs):
+        """拒绝不包含可写字段的部分更新。
+
+        Args:
+            attrs: 已通过字段级校验的输入映射。
+
+        Returns:
+            dict: 原已校验数据。
+
+        Raises:
+            ValidationError: partial=True 且输入为空。
+        """
         if self.partial and not attrs:
             raise serializers.ValidationError("至少提供一个可修改字段")
         return attrs
@@ -88,6 +110,14 @@ class RecruitmentSummarySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_is_deleted(self, instance):
+        """生成招募删除标记。
+
+        Args:
+            instance: 已投影的招募对象。
+
+        Returns:
+            bool: deleted_at 是否非空。
+        """
         return instance.deleted_at is not None
 
 
@@ -106,15 +136,47 @@ class RecruitmentDetailSerializer(RecruitmentSummarySerializer):
         read_only_fields = fields
 
     def get_my_application(self, instance):
+        """读取当前用户的最新申请摘要。
+
+        Args:
+            instance: 当前招募对象；实际值来自 detail_context 生成的 serializer.context。
+
+        Returns:
+            dict | None: 从查询上下文读取的申请 id/status 或 None。
+        """
         return self.context["my_application"]
 
     def get_permissions(self, instance):
+        """读取当前用户的招募操作权限。
+
+        Args:
+            instance: 当前招募对象；实际值来自 detail_context 生成的 serializer.context。
+
+        Returns:
+            dict: 查询上下文中已计算的权限与投递阻断原因。
+        """
         return self.context["permissions"]
 
     def get_application_counts(self, instance):
+        """读取仅向发布者提供的申请状态计数。
+
+        Args:
+            instance: 当前招募对象；实际值来自 detail_context 生成的 serializer.context。
+
+        Returns:
+            dict | None: 查询上下文中的计数；没有该权限时为 None，最终响应会省略该字段。
+        """
         return self.context.get("application_counts")
 
     def to_representation(self, instance):
+        """序列化招募详情并省略无权限的申请计数。
+
+        Args:
+            instance: 已完成时间投影的招募，context 必须由 detail_context 构造。
+
+        Returns:
+            dict: 招募详情；非发布者没有 application_counts 字段。
+        """
         result = super().to_representation(instance)
         if "application_counts" not in self.context:
             result.pop("application_counts")

@@ -6,30 +6,27 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 
 
 def _env(name, default=None):
-    """
-    读取环境变量，未设置时返回默认值。
+    """读取环境变量，保留显式设置的空字符串。
 
-    Params:
-        name: 环境变量名称
-        default: 环境变量未设置时返回的值，默认 None
+    Args:
+        name: 环境变量名称。
+        default: 未设置时返回的默认值，默认 None。
 
     Returns:
-        环境变量的字符串值，或原样返回 default；空字符串视为已设置
+        str | object: 环境变量字符串或原样返回的默认值。
     """
     return os.environ.get(name, default)
 
 
 def _env_bool(name, default=False):
-    """
-    将环境变量解析为布尔值。
+    """按约定真值解析布尔型环境变量。
 
-    Params:
-        name: 环境变量名称
-        default: 环境变量未设置时返回的值，默认 False
+    Args:
+        name: 环境变量名称。
+        default: 未设置时的布尔默认值，默认 False。
 
     Returns:
-        忽略首尾空白和大小写后，值为 1、true、yes 或 on 时返回 True，
-        其他已设置的值返回 False；未设置时返回 default
+        bool: 去除空白并忽略大小写后，1、true、yes、on 为真，其他已设置值为假。
     """
     raw = os.environ.get(name)
     if raw is None:
@@ -38,15 +35,14 @@ def _env_bool(name, default=False):
 
 
 def _env_list(name, default=""):
-    """
-    将逗号分隔的环境变量解析为字符串列表。
+    """解析逗号分隔的环境变量列表。
 
-    Params:
-        name: 环境变量名称
-        default: 环境变量未设置时使用的逗号分隔字符串，默认空字符串
+    Args:
+        name: 环境变量名称。
+        default: 未设置时的字符串，默认空字符串。
 
     Returns:
-        去除各项首尾空白并过滤空项后的字符串列表
+        list[str]: 去除各项首尾空白并过滤空项后的列表。
     """
     return [item.strip() for item in _env(name, default).split(",") if item.strip()]
 

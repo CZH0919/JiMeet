@@ -20,13 +20,15 @@ class ProfileUpdateSerializer(StrictSerializer):
 
 
 def profile_data(user) -> dict:
-    """
-    输出本人可见资料
+    """序列化当前用户自己的资料。
+
+    包含姓名和邮箱，只用于本人资料或登录响应，不用作公开用户摘要。
 
     Args:
-        user: 用户对象
+        user: 已认证的本人 User 实例。
+
     Returns:
-        dict: 包含 uid、昵称、姓名、角色、管理员标记、邮箱、邮件通知开关、隐私协议同意标记的字典
+        dict: uid、nickname、name、email、role、is_admin、email_notify_enabled、privacy_consented。
     """
     return {
         "uid": user.uid, "nickname": user.nickname, "name": user.name,

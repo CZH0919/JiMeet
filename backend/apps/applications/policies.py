@@ -34,21 +34,31 @@ class ApplicationAccess:
 
 
 def _is_user(user, user_id) -> bool:
+    """判断已认证用户主键是否匹配。
+
+    Args:
+        user: 当前用户，可为 None 或匿名用户。
+        user_id: 需要匹配的数据库用户主键。
+
+    Returns:
+        bool: 是否匹配。
+    """
     return bool(user and user.is_authenticated and user.pk == user_id)
 
 
 def resolve_application_access(user, app, recruitment, now) -> ApplicationAccess:
-    """
-    按对象关系、留存期限和申请状态解析字段权限。
+    """按关系、申请状态和留存期限计算字段读取权限。
 
-    申请人和发布者身份不可能同时成立，若同时成立则记录错误日志。
+    管理员无额外读取权限；withdrawn/invalid 禁止双方下载简历，并对发布者隐藏说明及私有标记。
+
     Args:
-        user: 当前操作者
-        app: 申请对象
-        recruitment: 申请对应的招聘对象
-        now: 当前时间，UTC 时区
+        user: 当前操作者。
+        app: 已补执行或完成时间投影的申请。
+        recruitment: 对应的已补执行或投影招募。
+        now: 带时区的业务时间。
+
     Returns:
-        ApplicationAccess 对象
+        ApplicationAccess: 记录、说明、姓名、简历及发布者私有标记的可见性。
     """
     publisher = _is_user(user, recruitment.publisher_id)
     applicant = _is_user(user, app.applicant_id)
@@ -69,7 +79,16 @@ def resolve_application_access(user, app, recruitment, now) -> ApplicationAccess
 
 
 def require_submit_identity(user, recruitment) -> None:
-    """在暂存文件及状态补执行前拒绝本人投递和未确认隐私的身份。"""
+    """在文件暂存前校验申请身份和隐私确认。
+
+    Args:
+        user: 当前申请人。
+        recruitment: 目标招募对象。
+
+    Raises:
+        NotAuthenticated: 用户未认证。
+        Forbidden: 申请本人发布的招募，或未确认隐私告知；分别使用 SELF_APPLICATION_FORBIDDEN、PRIVACY_NOT_CONSENTED。
+    """
     if _is_user(user, recruitment.publisher_id):
         raise Forbidden("不能申请本人发布的招聘", code=ErrorCode.SELF_APPLICATION_FORBIDDEN)
     if not user or not user.is_authenticated:
@@ -79,7 +98,22 @@ def require_submit_identity(user, recruitment) -> None:
 
 
 def can_submit_application(user, recruitment, now, *, has_active_application: bool) -> None:
-    """依次校验本人投递、隐私确认、开放窗口及调用方查得的重复记录。"""
+    """校验投递身份、开放窗口及重复申请限制。
+
+    Args:
+        user: 当前申请人。
+        recruitment: 已锁定并补执行状态的招募。
+        now: 带时区的业务时间。
+        has_active_application: 调用方在锁内查询出的是否已有未撤回申请。
+
+    Returns:
+        None: 校验成功；本函数不返回权限布尔值。
+
+    Raises:
+        NotAuthenticated: 用户未认证。
+        Forbidden: 本人投递或隐私未确认。
+        Conflict: 招募不可投递或已有未撤回申请，分别使用 RECRUITMENT_NOT_OPEN、DUPLICATE_APPLICATION。
+    """
     require_submit_identity(user, recruitment)
     if not rules.is_apply_open(recruitment, now):
         raise Conflict(ErrorCode.RECRUITMENT_NOT_OPEN, "招聘当前不可投递")
@@ -88,7 +122,18 @@ def can_submit_application(user, recruitment, now, *, has_active_application: bo
 
 
 def can_modify_application(user, app, recruitment) -> bool:
-    """申请人可修改未删除招聘下仍在处理中的申请，调用前须补执行状态。"""
+    """判断申请人能否修改当前申请。
+
+    对象可见性及留存判断由调用方先行完成。
+
+    Args:
+        user: 当前用户。
+        app: 已补执行或完成时间投影的申请。
+        recruitment: 对应招募。
+
+    Returns:
+        bool: 申请人身份匹配、申请为 processing 且招募未删除时为 True。
+    """
     return (
         _is_user(user, app.applicant_id)
         and app.status == ApplicationStatus.PROCESSING
@@ -97,12 +142,33 @@ def can_modify_application(user, app, recruitment) -> bool:
 
 
 def can_withdraw_application(user, app, recruitment) -> bool:
-    """撤回条件与修改一致。"""
+    """判断申请人能否撤回当前申请。
+
+    对象可见性及留存判断由调用方先行完成。
+
+    Args:
+        user: 当前用户。
+        app: 已补执行或完成时间投影的申请。
+        recruitment: 对应招募。
+
+    Returns:
+        bool: 申请人身份匹配、申请为 processing 且招募未删除时为 True。
+    """
     return can_modify_application(user, app, recruitment)
 
 
 def can_process_application(user, app, recruitment, now) -> bool:
-    """仅发布者可在处理窗口内处理 processing 申请。"""
+    """判断发布者能否在处理窗口内处理申请。
+
+    Args:
+        user: 当前用户。
+        app: 已补执行或投影的申请。
+        recruitment: 对应招募。
+        now: 带时区的业务时间。
+
+    Returns:
+        bool: 发布者身份匹配、申请为 processing 且仍可处理时为 True。
+    """
     return (
         _is_user(user, recruitment.publisher_id)
         and app.status == ApplicationStatus.PROCESSING

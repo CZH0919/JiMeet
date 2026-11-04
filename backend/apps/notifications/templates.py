@@ -16,13 +16,17 @@ _TEMPLATES = {
 
 
 def render(type: str, context: dict | None) -> tuple[str, str]:
-    """
-    渲染通知，未知类型或额外 context 键直接拒绝。
+    """使用白名单摘要字段生成通知标题与正文。
+
     Args:
-        type: 通知类型
-        context: 通知上下文
+        type: 已定义通知类型。
+        context: 摘要映射或 None；允许 recruitment_title、status_label、link、auto、reason_label。
+
     Returns:
-        渲染后的通知标题和内容
+        tuple[str, str]: 标题与正文，不包含简历或申请说明。
+
+    Raises:
+        ValueError: 通知类型未知或上下文包含未声明字段。
     """
     context = dict(context or {})
     if type not in _TEMPLATES:

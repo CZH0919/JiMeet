@@ -1,3 +1,4 @@
+"""业务事务的前置校验及招募、申请行锁顺序控制。"""
 from contextlib import contextmanager
 from threading import local
 
@@ -10,11 +11,10 @@ _held = local()
 
 
 def held_recruitment_id() -> int | None:
-    """
-    返回当前事务持有的招聘锁；事务结束或回滚到加锁前则返回 None。
+    """读取当前有效事务作用域持有的招募锁标记。
 
     Returns:
-        招聘对象的数据库主键，或 None
+        int | None: 招募主键；事务已退出或对应保存点已回滚时为 None。
     """
     block = getattr(_held, "atomic_block", None)
     # 记录 atomic 对象身份，防止上一笔事务或已回滚 savepoint 的标记被复用。
@@ -25,14 +25,12 @@ def held_recruitment_id() -> int | None:
 
 @contextmanager
 def recruitment_lock_scope():
-    """
-    隔离服务事务的锁标记，退出时无论成功或失败均恢复外层记录。
+    """隔离行锁标记，退出时恢复外层标记。
 
-    ### Usage:
-        with tx.recruitment_lock_scope():
-            r = tx.lock_recruitment(recruitment_id)
-            ...
-    
+    本上下文不创建数据库事务，也不主动获取行锁。
+
+    Yields:
+        None: 供业务事务在上下文内获取锁。
     """
     previous = (_held.__dict__).copy()
     _held.__dict__.clear()
@@ -44,14 +42,13 @@ def recruitment_lock_scope():
 
 
 def assert_recruitment_locked(recruitment) -> None:
-    """
-    确认对象在当前事务中已通过 lock_recruitment 加锁。
+    """确认招募对象在当前事务中持有有效行锁。
 
     Args:
-        recruitment: 招聘对象
-    
+        recruitment: 通过 lock_recruitment 获取的招募对象。
+
     Raises:
-        RuntimeError: 招聘对象未加锁或不属于当前事务
+        RuntimeError: 不在事务中，或对象/事务的行锁标记不匹配。
     """
     assert_in_atomic()
     # 同时核对事务和对象标记，拒绝跨事务复用旧对象。
@@ -64,40 +61,37 @@ def assert_recruitment_locked(recruitment) -> None:
 
 
 def assert_not_in_atomic() -> None:
-    """
-    检查 service 入口未嵌套在调用方的外层事务中。
+    """要求服务入口不处于调用方的外层事务。
 
     Raises:
-        RuntimeError: 当前数据库连接已经处于事务中
+        RuntimeError: 当前连接已处于 atomic 事务中。
     """
     if connection.in_atomic_block:
         raise RuntimeError("该操作不能在事务中执行")
 
 
 def assert_in_atomic() -> None:
-    """
-    检查当前数据库连接处于事务中，供行锁操作调用前校验。
+    """要求当前数据库连接已进入事务。
 
     Raises:
-        RuntimeError: 当前数据库连接不在事务中
+        RuntimeError: 当前连接不在 atomic 事务中。
     """
     if not connection.in_atomic_block:
         raise RuntimeError("该操作必须在事务中执行")
 
 
 def lock_recruitment(recruitment_id: int):
-    """
-    获取招聘对象并锁住对应数据行，必须在事务内调用。
+    """锁定招募行，并记录当前事务的锁标记。
 
-    Params:
-        recruitment_id: 招聘记录的数据库主键
+    Args:
+        recruitment_id: 招募主键。
 
     Returns:
-        带有已加锁标记的招聘对象，行锁持续到当前事务结束
+        Recruitment: 持有行锁的招募对象，锁持续到事务结束。
 
     Raises:
-        RuntimeError: 当前数据库连接不在事务中
-        NotFound: 招聘记录不存在
+        RuntimeError: 调用方未开启事务。
+        NotFound: 招募不存在。
     """
     assert_in_atomic()
     from apps.recruitments.models import Recruitment
@@ -113,19 +107,18 @@ def lock_recruitment(recruitment_id: int):
 
 
 def lock_application(application_id: int, recruitment):
-    """
-    锁住申请行，并校验申请属于已加锁的招聘。
+    """在招募锁之后获取所属申请的行锁。
 
-    Params:
-        application_id: 申请记录的数据库主键
-        recruitment: 在当前事务中通过 lock_recruitment 获取的招聘对象
+    Args:
+        application_id: 申请主键。
+        recruitment: 当前事务中已锁定的招募对象。
 
     Returns:
-        属于指定招聘的申请对象，行锁持续到当前事务结束
+        Application: 已加锁且归属匹配的申请对象。
 
     Raises:
-        RuntimeError: 不在事务中、招聘缺少已加锁标记，或申请不属于该招聘
-        NotFound: 申请记录不存在
+        RuntimeError: 缺少有效招募锁、不在事务中，或申请不属于该招募。
+        NotFound: 申请不存在。
     """
     assert_in_atomic()
     assert_recruitment_locked(recruitment)
@@ -141,19 +134,18 @@ def lock_application(application_id: int, recruitment):
 
 
 def peek_application_recruitment_id(application_id: int) -> int:
-    """
-    只读查询申请所属的招聘主键，供后续按招聘、申请的顺序加锁。
+    """只读查询申请所属招募，供调用方确定加锁顺序。
 
-    此查询不加锁，不能依据此次读取的状态作业务决定。
+    不获取行锁；业务状态必须在取得招募锁及申请锁后重新校验。
 
-    Params:
-        application_id: 申请记录的数据库主键
+    Args:
+        application_id: 申请主键。
 
     Returns:
-        申请所属招聘的数据库主键
+        int: 招募主键。
 
     Raises:
-        NotFound: 申请记录不存在
+        NotFound: 申请不存在。
     """
     from apps.applications.models import Application
 

@@ -22,13 +22,30 @@ CONTENT_TYPES = {
 
 @dataclass(frozen=True)
 class ResumeDownload:
+    """鉴权下载结果：已打开的流、展示文件名和可信响应 MIME 类型。"""
     stream: BinaryIO
     filename: str
     content_type: str
 
 
 def download_resume(user, application_id: int) -> ResumeDownload:
-    """按招募、申请顺序锁定并复核权限；失败关闭句柄，成功由响应负责关闭。"""
+    """在短事务内复核申请权限、打开简历并记录发布者下载审计。
+
+    锁顺序为招募再申请；失败时关闭已打开的句柄，申请人下载不记发布者查看审计。
+
+    Args:
+        user: 当前申请人或招募发布者，管理员身份不额外授权。
+        application_id: 申请主键。
+
+    Returns:
+        ResumeDownload: 成功后由调用方或 FileResponse 关闭 stream，传输在事务外进行。
+
+    Raises:
+        NotFound: 申请不可见、过留存期，或文件缺失/路径不可用。
+        Forbidden: withdrawn/invalid 状态禁止下载。
+        RuntimeError: 调用方处于事务中。
+        OSError: 其他未转换的文件系统读取错误。
+    """
     tx.assert_not_in_atomic()
     application = get_application(user, application_id, clock.now())
     stream = None
