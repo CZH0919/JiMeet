@@ -17,6 +17,14 @@ from apps.core.responses import envelope, ok
 @authentication_classes([])
 @permission_classes([AllowAny])
 def healthz(request):
+    """GET /api/v1/healthz：检查应用与数据库连通性。
+
+    Args:
+        request: 公开请求，无需登录。
+
+    Returns:
+        Response: 数据库可查询时 HTTP 200、data.status=ok；数据库异常时 HTTP 503、INTERNAL_ERROR。
+    """
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")

@@ -1,7 +1,15 @@
-"""申请留存清理预留；本周不删除申请、通知或简历。"""
+"""申请留存物理清理预留；当前仅执行访问期限控制。"""
 from datetime import datetime
 
 
 def purge_expired_applications(recruitment_id: int, *, now: datetime | None = None) -> bool:
-    """预留 180 天统计聚合与明细清理入口，后续实现须遵循数据库设计。"""
+    """申请留存聚合与物理清理的预留入口。
+
+    Args:
+        recruitment_id: 计划清理的招募主键。
+        now: 可选业务时间，当前实现不使用。
+
+    Raises:
+        NotImplementedError: 当前未实现物理清理，调用始终被拒绝。
+    """
     raise NotImplementedError("reserved for week 2")

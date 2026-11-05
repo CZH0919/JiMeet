@@ -10,20 +10,23 @@ from apps.recruitments import rules
 
 
 def notify(*, recipient, type: str, recruitment, application=None, context: dict | None = None) -> Notification | None:
-    """
-    创建通知，邮件仅在事务提交后交给 dispatch。
+    """在业务事务内创建站内通知及可选待发邮件记录。
 
-    申请事件及发给申请人的招聘通知须同时关联招聘与申请；留存到期
-    后不再生成这些通知。context 只允许模板声明的摘要字段。
+    邮件开关开启时创建 pending 记录；提交后 dispatch 异常仅记日志，真实邮件投递仍预留。
 
     Args:
-        recipient: 通知接收者，必须是已认证用户
-        type: 通知类型，必须是 apps.notifications.types 中定义的常量
-        recruitment: 通知关联的招聘对象，可为 None
-        application: 通知关联的申请对象，可为 None
-        context: 通知模板渲染的摘要字段，只允许 apps.notifications.templates 中声明的摘要字段
+        recipient: 已保存的接收用户，读取其邮件通知偏好；不在此处执行会话认证。
+        type: apps.notifications.types 中的通知类型常量。
+        recruitment: 关联招募；仅不要求关联的类型可为 None。
+        application: 可选关联申请；申请事件及部分招募通知必须提供，默认 None。
+        context: 可选的模板摘要字段，仅接受 templates 声明的键。
+
     Returns:
-        新增的通知对象，若留存到期则返回 None
+        Notification | None: 新通知；关联申请的通知在留存到期时不生成并返回 None。
+
+    Raises:
+        RuntimeError: 未处于业务事务内。
+        ValueError: 通知类型、关联关系或模板上下文字段不合法。
     """
     assert_in_atomic()
     if type not in types.ALL:
@@ -52,5 +55,6 @@ def notify(*, recipient, type: str, recruitment, application=None, context: dict
             notification=notification, to_email=recipient.email,
             status=EmailStatus.PENDING, attempts=0,
         )
-        transaction.on_commit(lambda log_id=log.pk: mail.dispatch(log_id))
+        # 派发失败不得影响已提交业务，避免异常清理路径删除仍被引用的简历。
+        transaction.on_commit(lambda log_id=log.pk: mail.dispatch(log_id), robust=True)
     return notification

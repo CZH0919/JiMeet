@@ -16,29 +16,36 @@ class PrivateResumeStorage(FileSystemStorage):
     """
     简历专用本地存储，根目录随 settings.PRIVATE_FILE_ROOT 读取。
 
-    简历路径不使用 MEDIA_ROOT，禁止生成公开 URL；后续文件服务负责生成
+    简历路径不使用 MEDIA_ROOT，禁止生成公开 URL；文件服务负责生成
     独立存储名、校验上传并在权限检查通过后读取文件。
     """
 
     @property
     def base_location(self):
-        """返回当前配置的私有目录，支持测试临时覆盖配置。"""
+        """读取当前配置的私有存储根目录。
+
+        Returns:
+            Path: settings.PRIVATE_FILE_ROOT，支持环境或测试覆盖。
+        """
         return settings.PRIVATE_FILE_ROOT
 
     @property
     def location(self):
-        """返回私有根目录的绝对路径，不缓存测试覆盖前的配置。"""
+        """返回私有存储根目录的绝对路径。
+
+        Returns:
+            str: 根据当前配置计算的绝对路径，不缓存旧配置。
+        """
         return os.path.abspath(self.base_location)
 
     def url(self, name):
-        """
-        拒绝生成简历的公开访问地址。
+        """拒绝为私有简历生成公开地址。
 
-        Params:
-            name: 文件在私有目录内的相对存储名
+        Args:
+            name: 文件相对存储名，当前实现不使用该值。
 
         Raises:
-            ValueError: 简历必须通过有权限校验的下载接口读取
+            ValueError: 调用始终被拒绝，简历只能通过鉴权下载接口访问。
         """
         raise ValueError("私有简历不提供公开 URL")
 
