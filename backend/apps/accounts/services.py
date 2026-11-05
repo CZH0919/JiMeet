@@ -9,31 +9,36 @@ from apps.core.errors import BizError, ErrorCode, Forbidden, ValidationFailed
 
 
 def _auth_failed() -> BizError:
-    """
-    返回统一认证失败，避免暴露冲突账号的具体资料。
-    Raises:
-        BizError: 认证失败错误
+    """构造不泄露身份冲突细节的认证失败异常。
+
+    Returns:
+        BizError: AUTH_FAILED、HTTP 401；由调用方决定何时抛出。
     """
     return BizError("认证身份无效或存在冲突", code=ErrorCode.AUTH_FAILED, http_status=401)
 
 
 def login_with_sso(identity: SSOIdentity) -> User:
-    """
-    按 subject、编号依次查找或绑定账号，不覆盖已绑定的其他身份。
+    """按可信身份标识查找、绑定或创建用户。
+
+    查找及绑定在事务中执行；不会把已绑定 subject 改绑到其他账号。
+
     Args:
-        identity: 已交换的 SSOIdentity 对象
+        identity: SSOIdentity，含非空且长度合法的 subject、real_id、name 和允许域名的 email。
+
     Returns:
-        用户对象
+        User: 已启用的用户；重复登录保留已有昵称和资料。
+
     Raises:
-        BizError: 认证失败错误
+        BizError: 身份无效、标识冲突或唯一约束冲突，错误码 AUTH_FAILED。
+        Forbidden: 命中已停用账号。
     """
     values = (identity.real_id, identity.name, identity.email, identity.subject)
     limits = (32, 32, 254, 191)
-    # 如果任意字段不属于实例，为空或超长，则拒绝登录，避免数据库约束错误泄露信息。
+    # 在查询或写库前校验身份字段，避免通过约束错误暴露冲突信息。
     if any(not isinstance(value, str) or not value.strip() or len(value.strip()) > limit
            for value, limit in zip(values, limits)):
         raise _auth_failed()
-    real_id, name, email, subject = (value.strip() for value in values) # 确认没问题后，才传递参数
+    real_id, name, email, subject = (value.strip() for value in values)
     if not is_tongji_email(email):
         raise _auth_failed()
     try:
@@ -66,7 +71,19 @@ def login_with_sso(identity: SSOIdentity) -> User:
 
 
 def update_profile(user: User, nickname=None, email_notify_enabled=None) -> User:
-    """只更新昵称与邮件开关；省略的字段保持原值。"""
+    """更新本人昵称和邮件通知偏好。
+
+    Args:
+        user: 待更新的用户对象，访问身份由调用方保证。
+        nickname: 可选字符串；去除首尾空白后须为 1～32 字，None 表示不修改。
+        email_notify_enabled: 可选 bool；None 表示不修改，不能用字符串或数字代替。
+
+    Returns:
+        User: 原用户对象，包含已保存的新值；没有提供字段时不写数据库。
+
+    Raises:
+        ValidationFailed: 昵称或通知开关类型、取值不合法。
+    """
     fields = []
     if nickname is not None:
         if not isinstance(nickname, str) or not 1 <= len(nickname.strip()) <= 32:
@@ -87,13 +104,13 @@ def update_profile(user: User, nickname=None, email_notify_enabled=None) -> User
 
 
 def give_privacy_consent(user: User) -> User:
-    """
-    将用户的隐私协议同意标记设为当前时间，若已同意则不变。
-    仅在用户明确同意时调用，避免误操作覆盖原值。
+    """记录首次隐私告知确认，重复调用保留首次时间。
+
     Args:
-        user: 用户对象
+        user: 已明确确认隐私告知的当前用户。
+
     Returns:
-        用户对象
+        User: 已从数据库刷新确认状态的原用户对象。
     """
     now = clock.now()
     User.objects.filter(pk=user.pk, privacy_consented_at__isnull=True).update(

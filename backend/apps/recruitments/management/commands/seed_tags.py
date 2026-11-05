@@ -12,14 +12,16 @@ class Command(BaseCommand):
 
     @transaction.atomic
     def handle(self, *args, **options):
-        """
-        按名称创建或更新预设标签，全部操作在同一事务中提交。
+        """在同一事务内幂等初始化预设标签及顺序。
 
-        Params:
-            args: Django 管理命令的位置参数，本命令不额外定义参数
-            options: Django 的通用命令选项，如 verbosity
+        新标签启用；已有标签仅更新顺序，保留停用状态及自定义标签。
 
-        新标签启用，已有标签只更新 sort_order；不会删除自定义标签。
+        Args:
+            args: Django 位置参数，本命令未定义额外参数。
+            options: Django 通用命令选项。
+
+        Returns:
+            None: 向标准输出报告新增数与核对总数。
         """
         created_count = 0
         for sort_order, name in enumerate(PRESET_TAGS):

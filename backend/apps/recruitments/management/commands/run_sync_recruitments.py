@@ -20,7 +20,17 @@ class Command(BaseCommand):
     help = "补执行到期招聘的关闭及七天自动拒绝"
 
     def handle(self, *args, **options):
-        """固定本轮时间，筛选候选并输出成功、失败及状态变更数量。"""
+        """按固定本轮时间逐个补执行到期状态。
+
+        每个招募独立事务，单项失败记录日志后继续；已删除招募及无需补处理的关闭招募不参与。
+
+        Args:
+            args: Django 位置参数，本命令未定义额外参数。
+            options: Django 通用命令选项。
+
+        Returns:
+            None: 输出处理、失败、关闭及自动拒绝数量。
+        """
         now = clock.now()
         processing = Application.objects.filter(
             recruitment_id=OuterRef("pk"), status=ApplicationStatus.PROCESSING,

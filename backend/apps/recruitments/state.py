@@ -1,4 +1,5 @@
 """招聘状态流转；补执行与业务操作使用两个独立事务。"""
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, TypeVar
@@ -26,15 +27,19 @@ class SyncResult:
 
 
 def reject_processing_applications(recruitment, decided_at: datetime, reason: str) -> int:
-    """
-    在招聘锁保护下拒绝仍在处理的申请，并在同一事务内创建通知。
+    """在招募锁内拒绝处理中申请，并写入结果通知。
 
     Args:
-        recruitment: 招聘对象，必须已加锁。
-        decided_at: 拒绝时间。
-        reason: 自动拒绝原因，必须是 "closed_timeout" 或 "full"。
+        recruitment: 当前事务已锁定的招募。
+        decided_at: 记录的拒绝决定时间。
+        reason: 自动拒绝原因，仅允许 closed_timeout 或 full。
+
     Returns:
-        拒绝的申请数量。
+        int: 实际拒绝的申请数。
+
+    Raises:
+        RuntimeError: 缺少当前事务的招募锁。
+        ValueError: reason 不在允许集合。
     """
     tx.assert_recruitment_locked(recruitment)
     labels = {"closed_timeout": "招聘关闭后的七天处理期已结束", "full": "招聘已满员"}
@@ -59,18 +64,22 @@ def reject_processing_applications(recruitment, decided_at: datetime, reason: st
 
 
 def sync_recruitment(recruitment_id: int, *, now: datetime | None = None) -> SyncResult:
-    """
-    实现提交到期关闭及七天自动拒绝；重复调用不重复生成通知。
+    """独立提交到期关闭及关闭后七天的自动拒绝。
+
+    已删除招募不再变更；重复调用不重复生成状态通知。关闭时间记录为原截止时间。
 
     Args:
-        recruitment_id: 招聘对象的数据库主键
-        now: 当前时间，默认为 clock.now()
+        recruitment_id: 招募主键。
+        now: 可选的带时区时间点，默认读取业务时钟。
 
     Returns:
-        SyncResult，表示本次补执行发生的关闭、自动拒绝及满员结果。
-    
+        SyncResult: 本次是否关闭、自动拒绝数量；该函数的 became_full 始终为 False。
+
+    Raises:
+        NotFound: 招募不存在。
+        RuntimeError: 调用方已在事务内。
     """
-    tx.assert_not_in_atomic()  # 需要确定在事务外提交补执行，避免锁住业务事务。
+    tx.assert_not_in_atomic()
     now = now if now is not None else clock.now()
     with tx.recruitment_lock_scope(), transaction.atomic():
         r = tx.lock_recruitment(recruitment_id)
@@ -80,7 +89,7 @@ def sync_recruitment(recruitment_id: int, *, now: datetime | None = None) -> Syn
         closed = False
         rejected = 0
         if r.status == RecruitmentStatus.OPEN and now >= r.deadline:
-            # 若招聘开放，但是时间已过截止，则补执行关闭招聘并拒绝仍在处理的申请。
+            # 关闭时间取实际截止时间，七天处理窗口不因任务延迟而延长。
             r.status = RecruitmentStatus.CLOSED
             r.closed_at = r.deadline
             r.close_reason = CloseReason.DEADLINE
@@ -94,20 +103,19 @@ def sync_recruitment(recruitment_id: int, *, now: datetime | None = None) -> Syn
         return SyncResult(closed, rejected, False)
 
 
-def mark_full(r: Recruitment, now: datetime) -> None:
-    """
-    在招聘锁内保存满员并拒绝其余申请，保留首次关闭与满员时间。
+def mark_full(r: Recruitment, now: datetime, *, extra_update_fields: Iterable[str] = ()) -> None:
+    """保存满员状态，并拒绝该招募其余处理中申请。
 
-    调用方先在 r 上增加 accepted_count，达到上限后直接调用本函数；
-    不可提前单独保存满员人数，否则会违反 recruitment_full_chk。
+    调用方先修改内存中的人数再调用，不得提前单独保存以免违反满员约束；已有首次关闭/满员时间不被重置。
 
     Args:
-        r: 招聘对象，必须已加锁。
-        now: 当前时间，默认为 clock.now()
-    Returns:
-        None
+        r: 当前事务已锁定且 accepted_count 已达到 max_headcount 的招募对象。
+        now: 本次业务操作的带时区时间，必须显式提供。
+        extra_update_fields: 与满员状态同次保存的其他字段名，默认空序列。
+
     Raises:
-        ValueError: 招聘未达到满员条件  
+        RuntimeError: 缺少当前事务的有效招募锁。
+        ValueError: accepted_count 仍小于人数上限。
     """
     tx.assert_recruitment_locked(r)
     if r.accepted_count < r.max_headcount:
@@ -118,23 +126,30 @@ def mark_full(r: Recruitment, now: datetime) -> None:
         r.close_reason = CloseReason.DEADLINE
     r.status = RecruitmentStatus.FULL
     r.full_at = r.full_at if r.full_at is not None else now
-    r.save(update_fields=[
+    r.save(update_fields=list(dict.fromkeys([
+        *extra_update_fields,
         "accepted_count", "status", "full_at", "closed_at", "close_reason", "updated_at",
-    ])
+    ])))
     reject_processing_applications(r, r.full_at, "full")
 
 
 def run_in_recruitment_tx(recruitment_id: int, fn: Callable[[Recruitment, datetime], T]) -> T:
-    """
-    先提交补执行，再加锁调用业务回调；回调异常只回滚业务事务。
+    """先提交状态补执行，再在独立事务中执行业务回调。
+
+    回调异常原样传播并回滚业务事务，不撤销已提交的到期补执行；回调中的申请锁必须在招募锁之后取得。
 
     Args:
-        recruitment_id: 招聘对象的数据库主键
-        fn: 业务回调，参数为 (Recruitment, now)，返回值类型为 T
+        recruitment_id: 招募主键。
+        fn: 接收 (已锁定招募, 本次业务时间) 的可调用对象。
+
     Returns:
-        fn 的返回值
+        T: 回调的返回值，返回前业务事务已提交。
+
+    Raises:
+        NotFound: 招募不存在。
+        RuntimeError: 调用方已在事务内。
     """
-    tx.assert_not_in_atomic() # 依然需要在事务外提交补执行，避免锁住业务事务。
+    tx.assert_not_in_atomic()
     now = clock.now()
     # sync 首次锁行即检查存在性，不存在时不会产生补执行写入。
     sync_recruitment(recruitment_id, now=now)

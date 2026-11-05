@@ -1,4 +1,4 @@
-"""预留邮件发送与重试命令，本周不执行清理或发送。"""
+"""邮件发送与重试命令预留，调用显式失败以避免误报任务成功。"""
 from django.core.management.base import BaseCommand, CommandError
 
 
@@ -8,5 +8,13 @@ class Command(BaseCommand):
     help = "预留邮件发送与重试（尚未实现）"
 
     def handle(self, *args, **options):
-        """显式报错，避免预留命令被误认为已成功执行。"""
+        """邮件发送与重试的预留命令入口。
+
+        Args:
+            args: Django 管理命令位置参数。
+            options: Django 通用命令选项。
+
+        Raises:
+            CommandError: 功能尚未实现，当前始终返回 reserved 错误。
+        """
         raise CommandError("reserved")

@@ -196,6 +196,62 @@ class AccountViewsTest(TxTestCase):
         self.assertFalse(user.is_admin)
         self.assertEqual(user.role, "student")
 
+    def test_profile_query_parameters_are_rejected_without_updates(self):
+        token = self._login()
+        user = User.objects.get(real_id="123")
+        original = (user.nickname, user.email_notify_enabled, user.updated_at)
+        queries = ("unexpected=x", "unexpected=x&unexpected=y", "nickname=", "nickname=x&nickname=y")
+        for method in ("get", "patch"):
+            for query in queries:
+                with self.subTest(method=method, query=query):
+                    path = f"/api/v1/me?{query}"
+                    if method == "get":
+                        response = self.client.get(path, HTTP_X_REQUEST_ID="profile-query-test")
+                    else:
+                        response = self.client.patch(
+                            path, {"nickname": "不应保存", "email_notify_enabled": False},
+                            format="json", HTTP_X_CSRFTOKEN=token, HTTP_X_REQUEST_ID="profile-query-test",
+                        )
+                    self.assertEqual((response.status_code, response.data["code"]), (400, "VALIDATION_ERROR"))
+                    self.assertEqual(set(response.data), {"code", "message", "data", "request_id"})
+                    self.assertEqual(response.data["request_id"], "profile-query-test")
+                    self.assertEqual(response["Cache-Control"], "private, no-store")
+                    user.refresh_from_db()
+                    self.assertEqual((user.nickname, user.email_notify_enabled, user.updated_at), original)
+
+    def test_profile_query_validation_preserves_authentication_and_csrf(self):
+        path = "/api/v1/me?unexpected=x"
+        response = self.client.get(path)
+        self.assertEqual((response.status_code, response.data["code"]), (401, "UNAUTHENTICATED"))
+        self.assertEqual(response["Cache-Control"], "private, no-store")
+        response = self.client.patch(path, {"nickname": "未登录修改"}, format="json")
+        self.assertEqual(response.status_code, 401)
+        token = self._login()
+        response = self.client.patch(path, {"nickname": "缺少令牌"}, format="json")
+        self.assertEqual(response.status_code, 403)
+        response = self.client.patch(
+            path, {"nickname": "合法令牌"}, format="json", HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual((response.status_code, response.data["code"]), (400, "VALIDATION_ERROR"))
+
+    def test_profile_responses_are_private_and_updates_require_json(self):
+        token = self._login()
+        profile = self.client.get("/api/v1/me")
+        self.assertEqual((profile.status_code, profile["Cache-Control"]), (200, "private, no-store"))
+        updated = self.client.patch(
+            "/api/v1/me", {"nickname": "正常更新"}, format="json", HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual((updated.status_code, updated.data["data"]["nickname"]), (200, "正常更新"))
+        self.assertEqual(updated["Cache-Control"], "private, no-store")
+        unchanged = self.client.patch("/api/v1/me", {}, format="json", HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(unchanged.data["data"], updated.data["data"])
+        rejected = self.client.patch(
+            "/api/v1/me", {"nickname": "表单修改"}, format="multipart", HTTP_X_CSRFTOKEN=token,
+        )
+        self.assertEqual((rejected.status_code, rejected.data["code"]), (415, "VALIDATION_ERROR"))
+        self.assertEqual(rejected["Cache-Control"], "private, no-store")
+        self.assertEqual(User.objects.get(real_id="123").nickname, "正常更新")
+
     def test_dev_route_requires_both_switches(self):
         for debug, allowed in ((False, True), (True, False), (False, False)):
             with self.subTest(debug=debug, allowed=allowed), override_settings(DEBUG=debug, ALLOW_DEV_LOGIN=allowed):

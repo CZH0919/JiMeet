@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 def _stringify(detail):
+    """递归将 DRF 错误详情转换为普通字符串。
+
+    Args:
+        detail: 字典、列表或单个错误详情。
+
+    Returns:
+        dict | list | str: 保留字典与列表结构的可序列化详情。
+    """
     if isinstance(detail, dict):
         return {key: _stringify(value) for key, value in detail.items()}
     if isinstance(detail, list):
@@ -26,19 +34,32 @@ def _stringify(detail):
 
 
 def _respond(code: str, message: str, http_status: int, details=None) -> Response:
+    """构造统一错误信封。
+
+    Args:
+        code: 稳定错误码。
+        message: 对外错误说明。
+        http_status: HTTP 状态码。
+        details: 可选校验详情；有值时放入 data.details。
+
+    Returns:
+        Response: 指定 HTTP 状态的错误响应。
+    """
     data = {"details": details} if details is not None else None
     return Response(envelope(code, message, data), status=http_status)
 
 
 def handle(exc, context) -> Response:
-    """
-    处理 DRF 异常，返回统一信封格式的响应，并在拒绝类异常时记录审计日志。
+    """将业务、框架或未处理异常转换为统一 HTTP 响应。
+
+    权限拒绝尝试写审计；原始未知异常及审计失败记录到服务日志。
 
     Args:
-        exc: 异常对象
-        context: 上下文字典，通常包含 'request' 键
+        exc: 原始异常。
+        context: DRF 异常上下文，包含请求和视图等信息。
+
     Returns:
-        DRF Response 对象，包含统一信封格式的响应数据
+        Response: 业务异常保留其错误码和 HTTP 状态；未知异常返回通用 500，不暴露内部详情。
     """
     if isinstance(exc, BizError):
         _audit_denial(exc, context)
@@ -61,6 +82,14 @@ def handle(exc, context) -> Response:
 
 
 def _map_drf_exception(exc):
+    """将 DRF 或 Django 常见异常映射为接口错误信息。
+
+    Args:
+        exc: 待映射的异常实例。
+
+    Returns:
+        tuple | None: (错误码, 文案, HTTP 状态, 详情)；不支持的异常返回 None。
+    """
     if isinstance(exc, exceptions.NotAuthenticated):
         return ErrorCode.UNAUTHENTICATED, "请先登录", status.HTTP_401_UNAUTHORIZED, None
     if isinstance(exc, exceptions.AuthenticationFailed):
@@ -96,6 +125,12 @@ def _map_drf_exception(exc):
 
 
 def _audit_denial(exc, context) -> None:
+    """为身份或权限拒绝记录审计，审计失败仅记日志。
+
+    Args:
+        exc: 业务异常；仅处理 Forbidden、NotAuthenticated、NotFoundAsDenied。
+        context: DRF 异常上下文，可包含 request。
+    """
     if not isinstance(exc, (Forbidden, NotAuthenticated, NotFoundAsDenied)):
         return
     request = context.get("request")

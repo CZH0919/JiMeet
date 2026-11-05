@@ -17,7 +17,7 @@ class Notification(models.Model):
     - `recruitment` / `application`: 可空的关联对象，供跳转及留存清理使用
     - `is_read` / `created_at`: 已读标记与创建时间
 
-    申请事件同时填写招聘与申请由后续通知 service 保证，外键统一使用 PROTECT。
+    申请事件同时填写招募与申请由通知服务保证，外键统一使用 PROTECT。
     """
 
     recipient = models.ForeignKey(

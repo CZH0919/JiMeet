@@ -1,4 +1,4 @@
-"""预留孤立简历文件清理命令，本周不执行清理或发送。"""
+"""孤立简历任务清理命令预留，调用显式失败以避免误报任务成功。"""
 from django.core.management.base import BaseCommand, CommandError
 
 
@@ -8,5 +8,13 @@ class Command(BaseCommand):
     help = "预留孤立简历文件清理（尚未实现）"
 
     def handle(self, *args, **options):
-        """显式报错，避免预留命令被误认为已成功执行。"""
+        """孤立简历任务清理的预留命令入口。
+
+        Args:
+            args: Django 管理命令位置参数。
+            options: Django 通用命令选项。
+
+        Raises:
+            CommandError: 功能尚未实现，当前始终返回 reserved 错误。
+        """
         raise CommandError("reserved")

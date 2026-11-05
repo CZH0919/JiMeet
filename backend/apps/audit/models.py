@@ -18,7 +18,7 @@ class AuditLog(models.Model):
     - `created_at`: 日志创建时间，至少留存一年
 
     模型实例只允许创建，禁止修改和删除；不得通过 QuerySet.update/delete
-    绕过实例保护。本周不提供留存清理入口。
+    绕过实例保护。当前留存清理命令仍为预留入口。
     """
 
     actor = models.ForeignKey(
@@ -62,15 +62,17 @@ class AuditLog(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        """
-        新建审计日志，禁止通过已有实例更新记录。
+        """只允许以 INSERT 新增审计实例。
 
-        Params:
-            args: 传递给 Django Model.save 的位置参数
-            kwargs: 传递给 Django Model.save 的关键字参数，如 using
+        Args:
+            args: 传给 Django Model.save 的位置参数。
+            kwargs: 传给 Model.save 的关键字参数，不允许 force_update 或非 None 的 update_fields。
+
+        Returns:
+            None: 新记录保存成功。
 
         Raises:
-            RuntimeError: 实例已经保存过，或请求强制更新
+            RuntimeError: 实例已保存，或调用方请求更新。
         """
         if (
             not self._state.adding
@@ -83,15 +85,14 @@ class AuditLog(models.Model):
         return super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
-        """
-        拒绝删除审计日志，保留至少一年的独立审计记录。
+        """拒绝通过模型实例删除审计日志。
 
-        Params:
-            args: Django Model.delete 的位置参数
-            kwargs: Django Model.delete 的关键字参数
+        Args:
+            args: 为兼容 Model.delete 保留的位置参数。
+            kwargs: 为兼容 Model.delete 保留的关键字参数。
 
         Raises:
-            RuntimeError: 本周不提供审计日志删除入口
+            RuntimeError: 当前始终禁止删除。
         """
         raise RuntimeError("审计日志不允许删除")
 

@@ -39,12 +39,26 @@ class CleanupReport:
 
 
 def _resume_root() -> Path:
-    """返回私有存储中的简历根目录，支持测试覆盖配置。"""
+    """读取私有存储下的简历目录。
+
+    Returns:
+        Path: PRIVATE_FILE_ROOT/resumes，不创建目录。
+    """
     return Path(settings.PRIVATE_FILE_ROOT) / "resumes"
 
 
 def _checked_path(path: str) -> Path:
-    """解析相对路径，拒绝绝对路径、越界及通过软链接逃逸的目标。"""
+    """将存储相对路径解析为受限的绝对文件路径。
+
+    Args:
+        path: 相对 PRIVATE_FILE_ROOT 的简历路径，须位于 resumes 内。
+
+    Returns:
+        Path: 解析符号链接后的文件路径。
+
+    Raises:
+        PermissionError: 绝对路径、根目录或文件路径越界，含符号链接逃逸。
+    """
     root = _resume_root()
     candidate = Path(path)
     if candidate.is_absolute():
@@ -59,8 +73,22 @@ def _checked_path(path: str) -> Path:
 
 
 def save_resume(upload) -> StoredResume:
-    """事务外校验并以随机路径排他创建文件，写入失败清理不完整文件。"""
-    assert_not_in_atomic() # 确定数据库连接不在外层事务中，避免锁住业务事务。
+    """在事务外校验上传并以随机路径排他创建私有文件。
+
+    文件权限为 0600；不覆盖已有文件。失败只清理本次创建的文件，并恢复上传对象的读取位置。
+
+    Args:
+        upload: 可读、可定位的上传对象，含 name 与 size。
+
+    Returns:
+        StoredResume: 相对路径、清洗后的展示名、实际字节数及格式。
+
+    Raises:
+        RuntimeError: 调用方已在数据库事务中。
+        ValidationFailed: 简历校验失败，或写入过程中实际内容为空/超限。
+        OSError: 路径越界、随机名称碰撞、目录创建或文件写入失败。
+    """
+    assert_not_in_atomic()
     validate_resume(upload)
     extension = resume_extension(upload.name)
     original_name = clean_resume_name(upload.name, extension)
@@ -101,7 +129,16 @@ def save_resume(upload) -> StoredResume:
 
 @contextmanager
 def staged_resume(upload) -> Iterator[StoredResume]:
-    """暂存新文件；调用块失败时清理，提交成功后由调用方另行删除旧文件。"""
+    """暂存新简历，并在调用块抛出异常时清理。
+
+    正常退出保留文件；调用方负责提交业务引用及在成功后清理被替换文件。保存和调用块异常继续向上传播。
+
+    Args:
+        upload: 传给 save_resume 的上传对象。
+
+    Yields:
+        StoredResume: 本次已保存的私有文件元数据。
+    """
     stored = save_resume(upload)
     try:
         yield stored
@@ -111,12 +148,31 @@ def staged_resume(upload) -> Iterator[StoredResume]:
 
 
 def open_resume(path: str) -> BinaryIO:
-    """校验私有路径后以二进制方式打开，权限判断由调用方负责。"""
+    """校验存储路径后以二进制模式打开简历。
+
+    仅检查存储边界；业务身份及留存权限由调用方负责。
+
+    Args:
+        path: 相对 PRIVATE_FILE_ROOT 的简历路径。
+
+    Returns:
+        BinaryIO: 打开的只读文件句柄，由调用方关闭。
+
+    Raises:
+        OSError: 路径越界、文件缺失、权限不足或打开失败。
+    """
     return _checked_path(path).open("rb")
 
 
 def discard_resume(path: str) -> bool:
-    """安全删除简历，不存在视为成功；失败只记录日志并返回 False。"""
+    """删除受限目录内的简历，不存在视为已清理。
+
+    Args:
+        path: 简历相对路径。
+
+    Returns:
+        bool: 删除成功或文件不存在为 True；路径无效或删除失败时记脱敏日志并返回 False。
+    """
     try:
         _checked_path(path).unlink(missing_ok=True)
         return True
@@ -128,14 +184,20 @@ def discard_resume(path: str) -> bool:
 
 def cleanup_orphans(*, older_than: timedelta = timedelta(hours=24),
                     referenced: Callable[[list[str]], set[str]]) -> CleanupReport:
-    """
-    分批清理未被引用且超过年龄门槛的简历，门槛不得短于 24 小时。
+    """分批删除超过年龄门槛且未被业务引用的简历。
+
+    删除前再次核对修改时间；引用查询回调的异常向上传播。该工具已实现，周期任务编排入口仍预留。
 
     Args:
-        older_than: 文件修改时间超过该阈值才会被清理
-        referenced: 回调函数，参数为相对路径列表，返回仍被引用的相对路径集合
+        older_than: 按修改时间计算的年龄门槛，默认 24 小时，不能短于 24 小时。
+        referenced: 接收相对路径列表并返回仍被引用路径集合的回调。
+
     Returns:
-        CleanupReport，表示扫描文件数、成功删除数、删除失败数；不保存申请或用户明细。
+        CleanupReport: 扫描、删除和失败数量；跳过符号链接，每批最多检查 200 个候选。
+
+    Raises:
+        RuntimeError: 调用方处于数据库事务中。
+        ValueError: 年龄门槛小于 24 小时。
     """
     assert_not_in_atomic()
     if older_than < timedelta(hours=24):

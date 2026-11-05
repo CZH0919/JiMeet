@@ -9,34 +9,34 @@ from apps.core.choices import Role
 
 
 def _new_uid() -> str:
+    """生成不含学工号信息的公开用户标识。
+
+    Returns:
+        str: UUID4 的 32 位十六进制字符串。
+    """
     return uuid.uuid4().hex
 
 
 class UserManager(BaseUserManager):
-    """
-    用户管理器，用于创建和管理用户对象
-
-    ### Methods
-    - `_create_user`: 创建用户的内部方法
-    - `create_user`: 创建普通用户
-    - `create_superuser`: 创建超级用户
-
-    """
+    """创建用户并设置密码存储、身份默认值及昵称。"""
     use_in_migrations = True
 
     def _create_user(self, real_id, name, email, password=None, **extra_fields):
-        """
-        创建用户的内部方法
+        """保存规范化邮箱及密码存储状态的用户。
 
-        Params:
-            real_id: 用户的学号或工号，不能为空
-            name: 用户的真实姓名，不能为空
-            email: 用户的邮箱地址
-            password: 用户的密码，可选
-            extra_fields: 其他额外的字段
+        Args:
+            real_id: 非空的内部学号或工号。
+            name: 非空姓名。
+            email: 邮箱字符串，由 Django 规范化；域名准入由上层服务校验。
+            password: 原始密码；省略或为空时设置不可用密码，不提供密码登录。
+            extra_fields: 角色、昵称、SSO 标识等 User 模型字段。
 
         Returns:
-            创建的用户对象
+            User: 已保存的用户对象。
+
+        Raises:
+            ValueError: real_id 或 name 为空。
+            IntegrityError: 数据库唯一性或字段约束冲突。
         """
         if not real_id:
             raise ValueError("real_id 不能为空")
@@ -48,9 +48,7 @@ class UserManager(BaseUserManager):
             email=self.normalize_email(email),
             **extra_fields,
         )
-        # 这里开始，因为一直未能明确到底用统一认证还是邮箱和密码，所以这样写。
-        # 用统一认证，就是 sso_subject 不为空，password 为空。
-        # 用邮箱和密码，就是 sso_subject 为空，password 不为空。
+        # 无密码时使用 Django 的不可用密码标记，保留身份提供方登录路径。
         if password:
             user.set_password(password)
         else:
@@ -59,18 +57,21 @@ class UserManager(BaseUserManager):
         return user
 
     def create_user(self, real_id, name, email, password=None, **extra_fields):
-        """
-        按照输入的信息创建一个普通用户
+        """创建用户，默认学生角色并生成与姓名分离的昵称。
 
-        Params:
-            real_id: 用户的学号或工号，不能为空
-            name: 用户的真实姓名，不能为空
-            email: 用户的邮箱地址
-            password: 用户的密码，可选，默认 None
-            extra_fields: 其他额外的字段
+        Args:
+            real_id: 非空的内部学号或工号。
+            name: 非空姓名。
+            email: 邮箱字符串，由 Django 规范化；域名准入由上层服务校验。
+            password: 原始密码；省略或为空时设置不可用密码，不提供密码登录。
+            extra_fields: 角色、昵称、SSO 标识等 User 模型字段。
 
         Returns:
-            创建的用户对象
+            User: 已保存的用户对象。
+
+        Raises:
+            ValueError: real_id 或 name 为空。
+            IntegrityError: 数据库唯一性或字段约束冲突。
         """
         extra_fields.setdefault("role", Role.STUDENT)
         if "nickname" not in extra_fields:
@@ -80,18 +81,21 @@ class UserManager(BaseUserManager):
         return self._create_user(real_id, name, email, password, **extra_fields)
 
     def create_superuser(self, real_id, name, email, password, **extra_fields):
-        """
-        按照输入的信息创建一个超级用户
+        """创建默认带业务管理员及 Django 管理权限的用户。
 
-        Params:
-            real_id: 用户的学号或工号，不能为空
-            name: 用户的真实姓名，不能为空
-            email: 用户的邮箱地址
-            password: 用户的密码，不能为空
-            extra_fields: 其他额外的字段
+        Args:
+            real_id: 非空的内部学号或工号。
+            name: 非空姓名。
+            email: 邮箱字符串，由 Django 规范化；域名准入由上层服务校验。
+            password: 调用时必须提供该参数；非空时进行哈希存储，空值仍会设置不可用密码。
+            extra_fields: 可覆盖默认教师角色、昵称及管理员标记的模型字段。
 
         Returns:
-            创建的超级用户对象
+            User: 已保存的用户对象。
+
+        Raises:
+            ValueError: real_id 或 name 为空。
+            IntegrityError: 数据库唯一性或字段约束冲突。
         """
         extra_fields.setdefault("role", Role.TEACHER)
         extra_fields.setdefault("nickname", name)
@@ -113,7 +117,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     - `role`: 用户角色，只能是 student 或 teacher
     - `is_admin` / `is_active`: 业务管理员标记与账号是否启用，业务权限只看 is_admin
     - `password` / `sso_subject`: Django 哈希密码与统一身份认证稳定标识，
-      两者至少有一个可用
+      数据库要求 password 非空或 sso_subject 非空，不保证存在可用的密码认证方式
     - `email_notify_enabled`: 是否接收邮件通知，站内通知始终生成
     - `privacy_consented_at`: 确认个人信息处理告知的时间，为空时不允许提交申请
     - `is_staff` / `is_superuser` / `groups` / `user_permissions`: 仅 Django Admin
@@ -144,7 +148,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     created_at = models.DateTimeField("创建时间", db_default=Now())
     updated_at = models.DateTimeField("更新时间", auto_now=True)
 
-    # 接受上述参数后，UserManager 会返回一个 User 对象，User 对象会调用 save 方法保存到数据库中。
     objects = UserManager()
 
     USERNAME_FIELD = "real_id"
@@ -164,4 +167,9 @@ class User(AbstractBaseUser, PermissionsMixin):
         ]
 
     def __str__(self) -> str:
+        """返回仅含内部主键的对象标识，避免输出身份资料。
+
+        Returns:
+            str: User(主键)。
+        """
         return f"User({self.pk})"

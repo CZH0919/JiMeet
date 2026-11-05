@@ -25,7 +25,7 @@ class Recruitment(models.Model):
     - `created_at` / `updated_at`: 发布时间与最近修改时间
 
     数据库保证人数范围及状态与时间的对应关系；截止时间和人数 50 上限
-    由应用层校验，状态流转由后续 service 在招聘行锁内执行。
+    由应用层校验，状态流转由业务服务在招募行锁内执行。
     """
 
     publisher = models.ForeignKey(

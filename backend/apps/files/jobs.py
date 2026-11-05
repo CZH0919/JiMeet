@@ -2,5 +2,9 @@
 
 
 def cleanup_orphans():
-    """预留引用查询与 storage.cleanup_orphans 的任务编排入口。"""
+    """孤立文件引用查询与清理任务编排的预留入口。
+
+    Raises:
+        NotImplementedError: 任务编排尚未实现；底层 storage.cleanup_orphans 可独立调用。
+    """
     raise NotImplementedError("reserved for week 2")
