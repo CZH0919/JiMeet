@@ -6,6 +6,19 @@ MAX_PAGE_SIZE = 50
 
 
 def _read_positive_int(raw, field: str, default: int) -> int:
+    """解析分页整数，空值回退到指定默认值。
+
+    Args:
+        raw: 原始参数值，通常是查询字符串、空字符串或 None。
+        field: 校验错误中使用的字段名。
+        default: raw 为 None 或空字符串时采用的值。
+
+    Returns:
+        int: 解析后的正整数或默认值。
+
+    Raises:
+        ValidationFailed: 值无法转换为整数，或转换结果小于 1。
+    """
     if raw in (None, ""):
         return default
     try:
@@ -18,16 +31,17 @@ def _read_positive_int(raw, field: str, default: int) -> int:
 
 
 def paginate(queryset, request):
-    """
-    对 queryset 进行分页，返回 (items, page, page_size, total)。
+    """按查询参数分页，越界页返回空列表。
 
     Args:
-        queryset: 可分页的查询集
-        request: DRF Request 对象，包含分页参数
+        queryset: 已完成权限和业务过滤、排序的查询集。
+        request: DRF 请求；page 默认 1，page_size 默认 20、最大 50。
+
     Returns:
-        tuple: (items, page_number, page_size, total_count)
+        tuple: (记录列表, 页码, 每页数量, 过滤后的总数)。
+
     Raises:
-        ValidationFailed: 当分页参数无效时抛出
+        ValidationFailed: 分页值不是正整数，或 page_size 超过 50。
     """
     page_number = _read_positive_int(request.query_params.get("page"), "page", DEFAULT_PAGE)
     page_size = _read_positive_int(
@@ -38,5 +52,6 @@ def paginate(queryset, request):
 
     total = queryset.count()
     offset = (page_number - 1) * page_size
-    items = list(queryset[offset : offset + page_size])
+    # 越界页无需访问数据切片，也避免极大页码转为数据库 OFFSET 时溢出。
+    items = [] if offset >= total else list(queryset[offset : offset + page_size])
     return items, page_number, page_size, total

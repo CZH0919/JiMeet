@@ -1,13 +1,12 @@
 import type {
   Application,
-  AuditLog,
   Conversation,
   Job,
   JobQuery,
   Message,
   Notification,
   Page,
-  ResumeFile,
+  Tag,
   User,
 } from '@/domain/models';
 import type { CreateJobInput } from '@/domain/validation';
@@ -21,30 +20,41 @@ export class AuthUnavailableError extends Error {
 }
 
 export interface AuthRepository {
-  login(): Promise<User>;
-  loginWithEmail(email: string): Promise<User>;
+  /** 开发登录（后端 dev-login，输入编号 real_id） */
+  devLogin(realId: string): Promise<User>;
   logout(): Promise<void>;
   getCurrentUser(): Promise<User | null>;
-  /** 演示用：切换为指定 mock 用户 */
-  loginAs(userId: string): Promise<User>;
+  /** 仅在用户主动确认个人信息处理告知后调用 */
+  confirmPrivacyConsent(): Promise<User>;
 }
 
 export interface JobRepository {
+  listTags(): Promise<Tag[]>;
   list(q: JobQuery): Promise<Page<Job>>;
   detail(id: string): Promise<Job>;
   create(input: CreateJobInput): Promise<Job>;
   update(id: string, input: CreateJobInput): Promise<Job>;
   close(id: string): Promise<Job>;
-  remove(id: string): Promise<{ affectedPending: number; affectedAccepted: number }>;
+  /** 发布者删除可省略原因；管理员删除必须给 reason */
+  remove(id: string, reason?: string): Promise<void>;
   listMine(q: JobQuery): Promise<Page<Job>>;
 }
 
 export interface ApplicationRepository {
-  submit(input: { jobId: string; resume: ResumeFile; note?: string }): Promise<Application>;
+  /** 提交申请：简历文件随 multipart 一起上传 */
+  submit(input: { jobId: string; resumeFile: File; note?: string }): Promise<Application>;
+  /** 申请详情（含 note / resume 元数据，列表接口不返回） */
+  detail(applicationId: string): Promise<Application>;
+  /** 修改本人处理中的申请：新版简历覆盖旧版（不传 resumeFile 则沿用旧版） */
+  update(applicationId: string, input: { resumeFile?: File; note?: string }): Promise<Application>;
   withdraw(applicationId: string): Promise<Application>;
   listMine(q: { page: number; pageSize: number }): Promise<Page<Application>>;
   listForJob(jobId: string, q: { page: number; pageSize: number }): Promise<Page<Application>>;
   mark(applicationId: string, action: 'accept' | 'hold' | 'reject'): Promise<Application>;
+  /** 发布者查看简历后确认「已修改」已阅 */
+  clearModified(applicationId: string, seenUpdatedAt: string): Promise<void>;
+  /** 下载简历文件（浏览器触发），失败抛错 */
+  downloadResume(applicationId: string): Promise<void>;
 }
 
 export interface NotificationRepository {
@@ -57,24 +67,16 @@ export interface NotificationRepository {
 export interface AdminRepository {
   listAllJobs(q: JobQuery): Promise<Page<Job>>;
   removeJobWithReason(jobId: string, reason: string): Promise<void>;
-  listAuditLogs(q: { page: number; pageSize: number }): Promise<Page<AuditLog>>;
 }
 
-export interface FileRepository {
-  uploadResume(file: File, onProgress?: (p: number) => void): Promise<ResumeFile>;
-}
-
+/** 聊天（后端暂未提供，保留本地 mock） */
 export interface MessageRepository {
-  /** 会话列表（含对方信息与最后一条消息） */
   listConversations(q: { page: number; pageSize: number }): Promise<Page<Conversation>>;
-  /** 某会话的消息，按时间升序 */
   listMessages(
     conversationId: string,
     q: { page: number; pageSize: number },
   ): Promise<Page<Message>>;
-  /** 发送纯文本消息，返回落库后的消息 */
   send(conversationId: string, text: string): Promise<Message>;
-  /** 与指定用户发起 / 复用会话（设计稿：任意两用户可对话） */
   openWith(userId: string): Promise<Conversation>;
 }
 
@@ -84,6 +86,5 @@ export interface Repositories {
   applications: ApplicationRepository;
   notifications: NotificationRepository;
   admin: AdminRepository;
-  files: FileRepository;
   messages: MessageRepository;
 }

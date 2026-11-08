@@ -10,28 +10,29 @@ RESUME_TYPES = frozenset({"pdf", "doc", "docx"})
 
 
 def invalid_resume(reason: str) -> ValidationFailed:
-    """
-    生成带稳定原因码的文件校验异常。
+    """构造带稳定原因码的简历校验异常。
+
     Args:
-        reason: 异常原因
+        reason: 原因标识，当前使用 type、size、signature。
+
     Returns:
-        ValidationFailed: 文件校验异常
+        ValidationFailed: INVALID_RESUME_FILE、HTTP 400；原因位于 details.reason，由调用方抛出。
     """
     return ValidationFailed("简历文件格式或大小不符合要求", code=ErrorCode.INVALID_RESUME_FILE,
                             details={"reason": reason})
 
 
 def resume_extension(name: str) -> str:
-    """
-    读取最后一个路径段的扩展名，并检查是否在允许范围内；
-    比起直接相信 Content-Type 或上传对象的 name 属性，额外检查文件头以防止伪造。
+    """从文件名末段提取并校验受支持的扩展名。
 
     Args:
-        name: 上传文件名
+        name: 原始上传文件名。
+
     Returns:
-        str: 扩展名（小写），若无扩展名则返回空
+        str: 小写的 pdf、doc 或 docx；该函数不检查文件内容。
+
     Raises:
-        ValidationFailed: 扩展名不在允许范围内
+        ValidationFailed: 扩展名缺失或不受支持，reason 为 type。
     """
     name = str(name).replace("\\", "/").rsplit("/", 1)[-1]
     extension = name.rsplit(".", 1)[-1].lower() if "." in name else ""
@@ -41,17 +42,16 @@ def resume_extension(name: str) -> str:
 
 
 def clean_resume_name(name: str, extension: str) -> str:
-    """
-    移除目录和控制字符，按 UTF-8 字节数截断并保留扩展名。
+    """移除目录及控制字符，并生成长度受限的展示文件名。
 
     Args:
-        name: 上传文件名
-        extension: 已知扩展名（小写）
+        name: 原始上传名称。
+        extension: 已通过校验的小写扩展名。
+
     Returns:
-        str: 展示名，长度不超过 255 字节
-    
+        str: 不超过 255 个 UTF-8 字节的文件名；空文件主名替换为 resume。
     """
-    basename = str(name).replace("\\", "/").rsplit("/", 1)[-1] # 仅保留最后一个路径段
+    basename = str(name).replace("\\", "/").rsplit("/", 1)[-1]
     basename = "".join(char for char in basename if not unicodedata.category(char).startswith("C"))
     stem = basename.rsplit(".", 1)[0] if "." in basename else basename
     # 展示名也不允许只有扩展名，截断时忽略末尾不完整的 UTF-8 字符。
@@ -62,22 +62,22 @@ def clean_resume_name(name: str, extension: str) -> str:
 
 
 def validate_resume(upload) -> None:
-    """
-    校验声明大小与实际内容，结束后恢复调用前读取位置。
+    """校验扩展名、声明/实际大小及文件特征，并恢复读取位置。
+
+    最多读取上限加一个字节；DOCX 只检查 ZIP 目录条目，不解压到文件系统。
 
     Args:
-        upload: 上传对象，必须支持 tell、seek、read 方法
+        upload: 带 name、size 且支持 read、seek、tell 的上传对象。
 
     Returns:
-        None(成功)
-    
+        None: 文件满足当前校验规则，非空且不超过 10 MiB。
+
     Raises:
-        ValidationFailed: 文件大小或文件头不符合要求
-        
+        ValidationFailed: 类型、大小或 PDF/DOC/DOCX 文件特征不合格。
+        OSError: 文件读取或定位失败。
     """
     extension = resume_extension(upload.name)
     if upload.size is None or not 0 < upload.size <= MAX_RESUME_SIZE:
-        # 如果上传对象没有 size 属性，或 size 为 0 或超过限制，则直接拒绝。
         raise invalid_resume("size")
     position = upload.tell()
     try:

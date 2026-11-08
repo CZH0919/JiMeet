@@ -15,18 +15,18 @@ export const can = {
   /** 管理员治理删除：管理员且非发布者本人 */
   moderateJob: (u: User | null, job: Job) => !!u && u.isAdmin && u.id !== job.publisher.id,
 
-  /** 申请招聘（统一走 canApply） */
-  applyJob: (u: User | null, job: Job) => canApply(job, u).ok,
+  /** 申请招聘（统一走 canApply；详情页优先用后端 permissions） */
+  applyJob: (u: User | null, job: Job) =>
+    job.permissions ? job.permissions.canApply : canApply(job, u).ok,
 
   /** 管理本人招聘的申请列表 */
   manageApps: (u: User | null, job: Job) => !!u && u.id === job.publisher.id,
 
-  /** 查看简历：申请者本人 / 招聘发布者 / 管理员（且未撤回） */
+  /** 查看简历：申请者本人 / 招聘发布者（且简历可见） */
   viewResume: (u: User | null, app: Application, job: Job) => {
     if (!u) return false;
-    if (u.id === app.applicant.id) return true;
-    if (u.id === job.publisher.id) return !app.resumeHidden;
-    if (u.isAdmin) return !app.resumeHidden;
+    if (u.id === app.applicant.id) return app.resume !== null;
+    if (u.id === job.publisher.id) return app.resume !== null;
     return false;
   },
 };

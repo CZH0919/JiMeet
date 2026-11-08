@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Application } from '@/domain/models';
 import { repo } from '@/data';
+import { fetchAllPages } from '@/data/fetchAll';
 import { useAsync } from '@/features/useAsync';
 import { ROLE_LABEL } from '@/domain/labels';
 import { formatDateTime } from '@/domain/jobStatus';
@@ -16,8 +17,12 @@ import { toast } from '@/stores/toast';
 export function JobApplicationsPage() {
   const { id } = useParams<{ id: string }>();
   const job = useAsync(() => repo.jobs.detail(id!), [id]);
-  const apps = useAsync(() => repo.applications.listForJob(id!, { page: 1, pageSize: 100 }), [id]);
+  const apps = useAsync(
+    () => fetchAllPages((p, s) => repo.applications.listForJob(id!, { page: p, pageSize: s })),
+    [id],
+  );
   const [preview, setPreview] = useState<Application | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   if (job.loading || apps.loading) return <PageLoader />;
@@ -25,7 +30,7 @@ export function JobApplicationsPage() {
   if (apps.error) return <ErrorState message={apps.error} />;
   if (!job.data) return null;
 
-  const full = job.data.acceptedCount >= job.data.recruitCount;
+  const full = job.data.acceptedCount >= job.data.maxHeadcount;
 
   const mark = async (app: Application, action: 'accept' | 'hold' | 'reject') => {
     setBusyId(app.id);
@@ -42,6 +47,32 @@ export function JobApplicationsPage() {
     }
   };
 
+  const openPreview = async (app: Application) => {
+    setPreviewLoading(true);
+    try {
+      const detail = await repo.applications.detail(app.id);
+      setPreview(detail);
+      // 发布者查看后确认「已修改」已阅（用刚读到的 updated_at 做版本比较）
+      if (detail.modified) {
+        await repo.applications.clearModified(detail.id, detail.updatedAt);
+        apps.reload();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '加载简历失败');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const download = async () => {
+    if (!preview) return;
+    try {
+      await repo.applications.downloadResume(preview.id);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '下载失败');
+    }
+  };
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
       <Link to={`/jobs/${id}`} className="mb-4 inline-flex items-center gap-1 text-sm text-ink2 hover:text-ink">
@@ -51,7 +82,7 @@ export function JobApplicationsPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-ink">招聘申请管理</h1>
         <span className="text-sm text-ink2">
-          「{job.data.title}」· 已接受 {job.data.acceptedCount} / 计划 {job.data.recruitCount}
+          「{job.data.title}」· 已接受 {job.data.acceptedCount} / 计划 {job.data.maxHeadcount}
         </span>
       </div>
 
@@ -60,24 +91,26 @@ export function JobApplicationsPage() {
       </InfoBanner>
 
       <div className="mt-5 flex flex-col gap-3">
-        {apps.data && apps.data.items.length === 0 ? (
+        {apps.data && apps.data.length === 0 ? (
           <EmptyState title="暂无收到的申请" />
         ) : (
-          apps.data?.items.map((app) => (
+          apps.data?.map((app) => (
             <ApplicationRow
               key={app.id}
               app={app}
               full={full}
               busy={busyId === app.id}
               onMark={(a) => mark(app, a)}
-              onPreview={() => setPreview(app)}
+              onPreview={() => openPreview(app)}
             />
           ))
         )}
       </div>
 
-      <Modal open={!!preview} title="简历详情" onClose={() => setPreview(null)}>
-        {preview && (
+      <Modal open={!!preview || previewLoading} title="简历详情" onClose={() => setPreview(null)}>
+        {previewLoading && !preview ? (
+          <p className="py-6 text-center text-sm text-muted">加载中…</p>
+        ) : preview ? (
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <span className="text-sm font-medium text-ink">
@@ -85,9 +118,9 @@ export function JobApplicationsPage() {
               </span>
               <ApplicationStatusBadge status={preview.status} />
             </div>
-            {preview.resumeHidden ? (
+            {preview.resume === null ? (
               <p className="rounded-md bg-muted-soft px-4 py-3 text-sm text-muted">
-                该申请已撤回，简历文件与补充说明不再对发布者展示。
+                该申请已撤回或失效，简历文件与补充说明不再展示。
               </p>
             ) : (
               <>
@@ -97,7 +130,7 @@ export function JobApplicationsPage() {
                     <p className="text-sm font-medium text-ink">{preview.resume.fileName}</p>
                     <p className="text-xs text-ink2">{fileSizeLabel(preview.resume.size)}</p>
                   </div>
-                  <Button size="sm" variant="secondary" onClick={() => toast.info('演示环境暂不提供真实下载')}>
+                  <Button size="sm" variant="secondary" onClick={download} disabled={!preview.canDownloadResume}>
                     下载
                   </Button>
                 </div>
@@ -110,7 +143,7 @@ export function JobApplicationsPage() {
               </>
             )}
           </div>
-        )}
+        ) : null}
       </Modal>
     </div>
   );
@@ -129,7 +162,7 @@ function ApplicationRow({
   onMark: (a: 'accept' | 'hold' | 'reject') => void;
   onPreview: () => void;
 }) {
-  const pending = app.status === 'pending';
+  const processing = app.status === 'processing';
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-5 sm:flex-row sm:items-center">
       <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -139,21 +172,23 @@ function ApplicationRow({
             {ROLE_LABEL[app.applicant.role]}
           </span>
           <ApplicationStatusBadge status={app.status} />
+          {processing && app.publisherMark === 'hold' && (
+            <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs text-warning">暂留</span>
+          )}
+          {app.modified && processing && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-warning-soft px-2 py-0.5 text-xs text-warning">
+              <span className="h-1.5 w-1.5 rounded-full bg-warning" /> 已修改
+            </span>
+          )}
         </div>
-        <p className="text-xs text-ink2">
-          {app.applicant.role === 'student' ? '学号' : '工号'} {app.applicant.id} · 提交于{' '}
-          {formatDateTime(app.createdAt)}
-        </p>
-        {app.note && !app.resumeHidden && (
-          <p className="line-clamp-1 text-sm text-ink2">{app.note}</p>
-        )}
+        <p className="text-xs text-ink2">提交于 {formatDateTime(app.createdAt)}</p>
       </div>
 
       <div className="flex items-center gap-2">
         <Button size="sm" variant="secondary" onClick={onPreview}>
-          {app.resumeHidden ? '已撤回' : '查看简历'}
+          查看简历
         </Button>
-        {pending && (
+        {processing && (
           <>
             <Button
               size="sm"

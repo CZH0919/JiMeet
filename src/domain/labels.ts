@@ -4,7 +4,9 @@ import type { ApplicationStatus, JobStatus, JobType, NotificationType, UserRole 
 
 export const JOB_TYPE_LABEL: Record<JobType, string> = {
   competition: '竞赛组队',
-  campus_activity: '活动招聘',
+  activity: '活动招聘',
+  internship: '实验室实习',
+  competition_notice: '竞赛通知',
 };
 
 export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
@@ -14,10 +16,11 @@ export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
 };
 
 export const APPLICATION_STATUS_LABEL: Record<ApplicationStatus, string> = {
-  pending: '处理中',
+  processing: '处理中',
   accepted: '已接受',
   rejected: '已拒绝',
   withdrawn: '已撤回',
+  invalid: '已失效',
 };
 
 export const ROLE_LABEL: Record<UserRole, string> = {
@@ -32,16 +35,16 @@ export const MARK_ACTION_LABEL: Record<'accept' | 'hold' | 'reject', string> = {
 };
 
 export const NOTIFICATION_TYPE_LABEL: Record<NotificationType, string> = {
-  application_accepted: '申请处理结果',
-  application_rejected: '申请处理结果',
-  application_withdrawn: '申请撤回通知',
-  job_removed_by_admin: '招聘删除通知',
-  job_modified: '招聘修改通知',
-  job_closed: '招聘状态变更',
+  application_submitted: '申请投递通知',
+  application_accepted: '申请已接受',
+  application_rejected: '申请已拒绝',
+  application_withdrawn: '申请已撤回',
+  application_updated: '申请已修改',
+  recruitment_closed: '招聘已关闭',
+  recruitment_updated: '招聘信息已更新',
+  recruitment_deleted: '招聘已删除',
+  admin_removed: '内容被管理员删除',
 };
-
-/** 相关领域候选值（发布页下拉 + 筛选面板共用） */
-export const FIELDS = ['计算机', '设创', '商学', '工程', '电气', '自动化', '机械', '人工智能'];
 
 /** 状态 → 语义色 token 名（供 StatusBadge 使用） */
 export const JOB_STATUS_TONE: Record<JobStatus, string> = {
@@ -51,8 +54,9 @@ export const JOB_STATUS_TONE: Record<JobStatus, string> = {
 };
 
 export const APPLICATION_STATUS_TONE: Record<ApplicationStatus, string> = {
-  pending: 'primary',
+  processing: 'primary',
   accepted: 'success',
   rejected: 'danger',
   withdrawn: 'muted',
+  invalid: 'muted',
 };

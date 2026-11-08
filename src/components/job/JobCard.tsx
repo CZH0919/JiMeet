@@ -1,9 +1,9 @@
 import { CalendarClock, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { Job } from '@/domain/models';
-import { remainingTime } from '@/domain/jobStatus';
+import { isNotice, remainingTime } from '@/domain/jobStatus';
 import { APPLICATION_STATUS_LABEL } from '@/domain/labels';
-import { FieldTag, JobTypeTag } from './JobTypeTag';
+import { JobTypeTag, TagTag } from './JobTypeTag';
 import { JobStatusBadge } from '@/components/ui/StatusBadge';
 
 export function JobCard({ job }: { job: Job }) {
@@ -15,23 +15,26 @@ export function JobCard({ job }: { job: Job }) {
       <div className="flex items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <JobTypeTag type={job.type} />
-          <FieldTag field={job.field} />
+          {job.tags.map((t) => (
+            <TagTag key={t.id} tag={t} />
+          ))}
         </div>
         <JobStatusBadge status={job.status} />
       </div>
 
       <h3 className="text-base font-semibold text-ink group-hover:text-primary">{job.title}</h3>
-      <p className="line-clamp-2 text-sm leading-relaxed text-ink2">{job.description}</p>
 
       <div className="mt-auto flex items-center gap-4 text-sm text-ink2">
         <span className="flex items-center gap-1">
           <CalendarClock size={15} className="text-muted" />
           <span className="text-xs">剩余 {remainingTime(job.deadline)}</span>
         </span>
-        <span className="flex items-center gap-1">
-          <Users size={15} className="text-muted" />
-          <span className="text-xs">招募 {job.recruitCount} 人</span>
-        </span>
+        {!isNotice(job) && (
+          <span className="flex items-center gap-1">
+            <Users size={15} className="text-muted" />
+            <span className="text-xs">招募 {job.maxHeadcount} 人</span>
+          </span>
+        )}
       </div>
 
       {job.myApplicationStatus && (

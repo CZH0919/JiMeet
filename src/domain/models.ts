@@ -1,48 +1,69 @@
 export type UserRole = 'student' | 'teacher';
 
+/** 本人资料（GET /me）映射后的领域模型；id 即后端 32 位十六进制 uid */
 export interface User {
-  id: string; // 学号 / 工号
-  name: string;
-  email: string;
+  id: string; // uid
+  name: string; // 展示名（后端 nickname）
   role: UserRole;
   isAdmin: boolean;
-  college?: string;
-  major?: string;
-  avatarUrl?: string;
+  email?: string;
+  privacyConsented: boolean;
 }
 
-export type JobType = 'competition' | 'campus_activity';
+/**
+ * 招聘类型。competition / activity / internship 来自后端；
+ * competition_notice 为前端本地特性（后端暂未提供），仅走 mock。
+ */
+export type JobType = 'competition' | 'activity' | 'internship' | 'competition_notice';
+
 /** 招募中 / 已满员 / 已关闭 */
 export type JobStatus = 'open' | 'full' | 'closed';
 
+export interface Tag {
+  id: number;
+  name: string;
+}
+
 export interface Job {
-  id: string;
+  id: string; // 后端正整数 id 转字符串；mock 通知用 'job-N'
   type: JobType;
   title: string;
   description: string;
-  requirement: string;
-  field: string; // 相关领域：计算机 / 设创 / 商学 / 工程 ...
-  recruitCount: number;
+  tags: Tag[];
+  minHeadcount: number | null;
+  maxHeadcount: number;
   acceptedCount: number;
-  deadline: string; // ISO8601
+  deadline: string; // ISO8601（带时区）
   status: JobStatus;
+  isDeleted: boolean;
   publisher: Pick<User, 'id' | 'name' | 'role'>;
   createdAt: string;
   updatedAt: string;
+  /** 仅详情接口返回（列表 summary 不含）；有值时用于卡片「已申请」提示 */
   myApplicationStatus?: ApplicationStatus | null;
+  /** 详情接口对发布者返回的五态计数之和 */
   applicationCount: number;
+  /** 详情接口 permissions 映射，用于投递按钮展示；写操作仍由后端重新校验 */
+  permissions?: {
+    canApply: boolean;
+    canEdit: boolean;
+    canClose: boolean;
+    canDelete: boolean;
+    canViewApplications: boolean;
+    /** 后端返回的展示文案（可空），仅用于展示，不作为判断依据 */
+    applyBlockedReason: string | null;
+    /** 后端返回的原始业务错误码（可空），用于区分软阻塞（如隐私告知未确认） */
+    applyBlockedCode: string | null;
+  };
 }
 
-/** 处理中 / 已接受 / 已拒绝 / 已撤回；后三者为终态 */
-export type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn';
+/** 处理中 / 已接受 / 已拒绝 / 已撤回 / 已失效；除处理中外均为终态 */
+export type ApplicationStatus = 'processing' | 'accepted' | 'rejected' | 'withdrawn' | 'invalid';
 
 export interface ResumeFile {
-  id: string;
   fileName: string;
-  size: number;
-  mimeType: string;
-  uploadedAt: string;
-  downloadUrl?: string;
+  size: number; // 字节
+  type: string; // pdf | doc | docx
 }
 
 export interface Application {
@@ -51,15 +72,22 @@ export interface Application {
   jobTitle: string;
   jobType: JobType;
   applicant: Pick<User, 'id' | 'name' | 'role'>;
-  resume: ResumeFile;
+  /** null 表示简历已不可见（撤回/失效） */
+  resume: ResumeFile | null;
   note?: string;
   status: ApplicationStatus;
   createdAt: string;
   updatedAt: string;
-  resumeHidden: boolean;
+  /** 发布者私有标记：hold 表示暂留（仍为 processing） */
+  publisherMark: 'none' | 'hold';
+  /** 申请人修改过申请，发布者查看前显示「已修改」红点 */
+  modified: boolean;
+  canModify: boolean;
+  canWithdraw: boolean;
+  canProcess: boolean;
+  canDownloadResume: boolean;
 }
 
-/** 站内纯文本消息（设计稿第 13 页：任意两用户可对话） */
 export interface Message {
   id: string;
   conversationId: string;
@@ -68,7 +96,6 @@ export interface Message {
   createdAt: string;
 }
 
-/** 会话（当前用户视角：peer 是对方，lastMessage 用于列表预览） */
 export interface Conversation {
   id: string;
   peer: Pick<User, 'id' | 'name' | 'role'>;
@@ -77,36 +104,25 @@ export interface Conversation {
 }
 
 export type NotificationType =
+  | 'application_submitted'
   | 'application_accepted'
   | 'application_rejected'
   | 'application_withdrawn'
-  | 'job_removed_by_admin'
-  | 'job_modified'
-  | 'job_closed';
+  | 'application_updated'
+  | 'recruitment_closed'
+  | 'recruitment_updated'
+  | 'recruitment_deleted'
+  | 'admin_removed';
 
 export interface Notification {
   id: string;
   type: NotificationType;
   title: string;
-  body: string;
-  jobId?: string;
-  jobTitle?: string;
-  recipientId: string; // 接收者用户 id
+  body: string; // 后端 content
+  jobId?: string; // recruitment_id
+  applicationId?: string;
   createdAt: string;
   read: boolean;
-}
-
-export interface AuditLog {
-  id: string;
-  operatorId: string;
-  operatorName: string;
-  operatorRole: UserRole;
-  targetType: 'job';
-  targetId: string;
-  targetTitle: string;
-  action: 'delete_job';
-  reason: string;
-  createdAt: string;
 }
 
 export interface Page<T> {
@@ -116,13 +132,14 @@ export interface Page<T> {
   total: number;
 }
 
+/** 后端分页接口每页最大条数（page_size 上限），前端请求 page_size 不得超过该值。 */
+export const MAX_PAGE_SIZE = 50;
+
 export interface JobQuery {
   type?: JobType | 'all';
-  keyword?: string;
-  field?: string;
-  minRecruit?: number;
-  deadlineWithin?: number; // 截止时间在 N 天内
-  sort?: 'latest' | 'earliest';
+  keyword?: string; // 后端 q
+  tagId?: number; // 后端 tag（单个）
+  status?: JobStatus;
   page: number;
   pageSize: number;
 }

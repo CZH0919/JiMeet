@@ -1,14 +1,14 @@
-import type { JobType } from './models';
+import type { JobType, Tag } from './models';
 
-/** 校验规则（对应 SRS FR-04/FR-05），纯函数、无 IO，可直接单测 */
+/** 校验规则（对应后端接口契约），纯函数、无 IO，可直接单测 */
 
 export interface CreateJobInput {
   type: JobType;
   title: string;
   description: string;
-  requirement: string;
-  field: string;
-  recruitCount: number;
+  tags: Tag[];
+  minHeadcount: number | null;
+  maxHeadcount: number;
   deadline: string;
 }
 
@@ -16,6 +16,7 @@ export type FieldErrors<T> = Partial<Record<keyof T | 'form', string>>;
 
 const ACCEPTED_EXT = ['.pdf', '.doc', '.docx'];
 export const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+export const MAX_DEADLINE_AHEAD_MS = 365 * 24 * 60 * 60 * 1000; // 截止时间不得晚于当前时间一年
 
 export function extOf(name: string): string {
   const i = name.lastIndexOf('.');
@@ -56,17 +57,27 @@ export function validateJobForm(input: CreateJobInput): FieldErrors<CreateJobInp
   else if (input.description.trim().length < 10) errors.description = '需求描述至少 10 字';
   else if (input.description.trim().length > 2000) errors.description = '需求描述不超过 2000 字';
 
-  if (input.requirement.trim().length > 1000) errors.requirement = '补充说明不超过 1000 字';
+  if (!input.tags || input.tags.length === 0) errors.tags = '请选择相关标签';
 
-  if (!input.field) errors.field = '请选择相关领域';
+  // 竞赛通知无人数上限，跳过人数校验
+  if (input.type !== 'competition_notice') {
+    if (!Number.isInteger(input.maxHeadcount) || input.maxHeadcount < 1)
+      errors.maxHeadcount = '计划招募人数至少为 1';
+    else if (input.maxHeadcount > 50) errors.maxHeadcount = '计划招募人数不超过 50 人';
 
-  if (!Number.isInteger(input.recruitCount) || input.recruitCount < 1)
-    errors.recruitCount = '计划招募人数至少为 1';
-  else if (input.recruitCount > 50) errors.recruitCount = '计划招募人数不超过 50 人';
+    if (input.minHeadcount != null) {
+      if (!Number.isInteger(input.minHeadcount) || input.minHeadcount < 1)
+        errors.minHeadcount = '人数下限至少为 1';
+      else if (input.minHeadcount > input.maxHeadcount)
+        errors.minHeadcount = '人数下限不能大于上限';
+    }
+  }
 
   if (!input.deadline) errors.deadline = '请选择截止时间';
   else if (new Date(input.deadline).getTime() <= Date.now())
     errors.deadline = '截止时间须晚于当前时间';
+  else if (new Date(input.deadline).getTime() > Date.now() + MAX_DEADLINE_AHEAD_MS)
+    errors.deadline = '截止时间不能晚于当前时间一年';
 
   return errors;
 }
@@ -75,16 +86,5 @@ export function validateJobForm(input: CreateJobInput): FieldErrors<CreateJobInp
 export function validateModerationReason(reason: string): string | null {
   if (!reason.trim()) return '请填写删除原因';
   if (reason.trim().length < 10) return '删除原因至少 10 字';
-  return null;
-}
-
-export function validateLoginEmail(email: string): string | null {
-  if (!email.trim()) return '请输入邮箱';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return '邮箱格式不正确';
-  return null;
-}
-
-export function validateLoginPassword(pwd: string): string | null {
-  if (!pwd) return '请输入密码';
   return null;
 }

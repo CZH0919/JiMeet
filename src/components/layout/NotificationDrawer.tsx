@@ -82,7 +82,6 @@ export function NotificationDrawer({ open, onClose }: Props) {
                     </div>
                     <p className="mt-1 break-words text-sm leading-relaxed text-ink2">{n.title}</p>
                     {n.body && <p className="mt-1 break-words text-xs leading-relaxed text-ink2">{n.body}</p>}
-                    {n.jobTitle && <p className="mt-1 truncate text-xs text-muted">相关招聘：{n.jobTitle}</p>}
                     <p className="mt-1 text-xs text-muted">{formatDateTime(n.createdAt)}</p>
                   </Link>
                 </li>

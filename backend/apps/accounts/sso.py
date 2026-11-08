@@ -1,4 +1,4 @@
-"""SSO 身份与提供方抽象；正式 CAS 接入本周仅预留。"""
+"""认证身份与提供方接口；开发身份可用，正式 CAS 提供方为预留实现。"""
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -14,22 +14,30 @@ class SSOIdentity:
 
 
 class SSOProvider(ABC):
-    """
-    认证跳转与身份交换的统一接口。
-
-    ### 这里由于未知学校的正式认证规范，暂时全部返回 NotImplementedError，开发期使用 DevSSOProvider。
-    """
+    """认证提供方抽象接口，约定授权地址生成与回调身份交换。"""
 
     @abstractmethod
     def authorize_url(self, state: str) -> str:
-        """
-        返回携带 state 的认证地址。
+        """授权地址生成抽象入口，由具体提供方实现。
+
+        Args:
+            state: 调用方生成的认证状态标识。
+
+        Raises:
+            NotImplementedError: 直接执行基类方法。
         """
         raise NotImplementedError
 
     @abstractmethod
     def exchange(self, callback_params: dict) -> SSOIdentity:
-        """交换已验证的回调信息，不保存认证凭证。"""
+        """回调身份交换抽象入口，由具体提供方实现。
+
+        Args:
+            callback_params: 回调或开发登录参数映射。
+
+        Raises:
+            NotImplementedError: 直接执行基类方法。
+        """
         raise NotImplementedError
 
 
@@ -39,11 +47,25 @@ class DevSSOProvider(SSOProvider):
     """
 
     def authorize_url(self, state: str) -> str:
-        """开发期直接使用 dev-login，不提供模拟跳转。"""
+        """返回开发登录入口，不执行外部认证跳转。
+
+        Args:
+            state: 为保持提供方接口一致而接收，开发实现不使用。
+
+        Returns:
+            str: 相对路径 /api/v1/auth/dev-login。
+        """
         return "/api/v1/auth/dev-login"
 
     def exchange(self, callback_params: dict) -> SSOIdentity:
-        """用编号生成稳定 subject，未提供姓名和邮箱时使用开发默认值。"""
+        """从开发登录参数构造稳定的身份对象。
+
+        Args:
+            callback_params: 经输入校验的 real_id 及可选 name、email；未提供姓名和邮箱时按编号生成。
+
+        Returns:
+            SSOIdentity: subject 为 dev: 加编号；具体身份有效性由账号服务继续校验。
+        """
         real_id = callback_params.get("real_id", "").strip()
         return SSOIdentity(
             real_id=real_id,
@@ -57,9 +79,23 @@ class CasSSOProvider(SSOProvider):
     """等待学校正式认证规范的 CAS 接入位置。"""
 
     def authorize_url(self, state: str) -> str:
-        """预留正式认证跳转。"""
+        """正式 CAS 的授权地址生成预留入口。
+
+        Args:
+            state: 调用方生成的认证状态标识。
+
+        Raises:
+            NotImplementedError: 正式认证尚未接入；当前调用始终抛出 reserved。
+        """
         raise NotImplementedError("reserved")
 
     def exchange(self, callback_params: dict) -> SSOIdentity:
-        """预留正式身份交换。"""
+        """正式 CAS 的回调身份交换预留入口。
+
+        Args:
+            callback_params: 回调或开发登录参数映射。
+
+        Raises:
+            NotImplementedError: 正式认证尚未接入；当前调用始终抛出 reserved。
+        """
         raise NotImplementedError("reserved")

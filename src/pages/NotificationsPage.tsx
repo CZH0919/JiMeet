@@ -46,7 +46,8 @@ export function NotificationsPage() {
         <div className="flex flex-col gap-3">
           {data?.items.map((n) => {
             // 招聘已被删除时详情页必定 404，这类通知不跳转，只标记已读
-            const canOpenJob = Boolean(n.jobId) && n.type !== 'job_removed_by_admin';
+            const canOpenJob =
+              Boolean(n.jobId) && n.type !== 'recruitment_deleted' && n.type !== 'admin_removed';
             const className = clsx(
               'block w-full rounded-lg border bg-surface p-4 text-left transition-colors',
               canOpenJob && 'hover:border-primary',
@@ -69,9 +70,6 @@ export function NotificationsPage() {
                   <p className="mt-1 break-words text-sm leading-relaxed text-ink2">{n.title}</p>
                   {n.body && (
                     <p className="mt-1 whitespace-pre-line break-words text-sm leading-relaxed text-ink2">{n.body}</p>
-                  )}
-                  {n.jobTitle && (
-                    <p className="mt-1 truncate text-xs text-muted">相关招聘：{n.jobTitle}</p>
                   )}
                   <p className="mt-1 text-xs text-muted">{formatDateTime(n.createdAt)}</p>
                 </div>

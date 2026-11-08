@@ -9,11 +9,13 @@ import { clsx } from 'clsx';
 const TABS: { key: TypeFilter; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'competition', label: '竞赛组队' },
-  { key: 'campus_activity', label: '活动招聘' },
+  { key: 'activity', label: '活动招聘' },
+  { key: 'internship', label: '实验室实习' },
+  { key: 'competition_notice', label: '竞赛通知' },
 ];
 
 export function HomePage() {
-  const { type, setType, keyword, setKeyword, sort, setSort, page, setPage, pageSize, data, loading, error, reload } =
+  const { type, setType, keyword, setKeyword, page, setPage, pageSize, data, loading, error, reload } =
     useJobList('all', 9);
 
   return (
@@ -21,23 +23,12 @@ export function HomePage() {
       <div className="mb-6 flex flex-col items-start justify-between gap-4 rounded-xl bg-gradient-to-r from-[#EAF3FC] to-white p-6 sm:flex-row sm:items-center">
         <div>
           <h1 className="text-xl font-semibold text-ink">招聘信息</h1>
-          <p className="mt-1 text-sm text-ink2">根据你的偏好个性化推送招聘，发现合适的竞赛与活动机会</p>
-        </div>
-        <div className="flex items-center gap-2 text-sm text-ink2">
-          <span>按时间与推荐度排序</span>
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as 'latest' | 'earliest')}
-            className="rounded-md border border-line bg-surface px-2 py-1 text-sm focus:outline-none focus:border-primary"
-          >
-            <option value="latest">最新发布</option>
-            <option value="earliest">最早发布</option>
-          </select>
+          <p className="mt-1 text-sm text-ink2">发现合适的竞赛组队、活动招聘与实验室实习机会</p>
         </div>
       </div>
 
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-1 rounded-md bg-page p-1">
+        <div className="flex flex-wrap items-center gap-1 rounded-md bg-page p-1">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -63,7 +54,7 @@ export function HomePage() {
               setKeyword(e.target.value);
               setPage(1);
             }}
-            placeholder="搜索竞赛、活动、项目关键词"
+            placeholder="搜索竞赛、活动、实习关键词"
             className="w-full rounded-md border border-line bg-surface py-2 pl-9 pr-3 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
           />
         </div>

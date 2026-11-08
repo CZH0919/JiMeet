@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Job } from '@/domain/models';
 import { repo } from '@/data';
 import { validateNote } from '@/domain/validation';
+import { useSession } from '@/stores/session';
 import { FileUploader } from './FileUploader';
 import { Button } from '@/components/ui/Button';
 import { Field, Textarea } from '@/components/ui/Field';
@@ -16,16 +17,19 @@ interface ApplyDialogProps {
 }
 
 export function ApplyDialog({ job, open, onClose, onSubmitted }: ApplyDialogProps) {
+  const user = useSession((s) => s.user);
+  const setUser = useSession((s) => s.setUser);
   const [file, setFile] = useState<File | null>(null);
   const [note, setNote] = useState('');
-  const [progress, setProgress] = useState(0);
-  const [uploading, setUploading] = useState(false);
+  const [consentChecked, setConsentChecked] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  const needsConsent = !!user && !user.privacyConsented;
 
   const reset = () => {
     setFile(null);
     setNote('');
-    setProgress(0);
+    setConsentChecked(false);
   };
 
   const submit = async () => {
@@ -38,20 +42,25 @@ export function ApplyDialog({ job, open, onClose, onSubmitted }: ApplyDialogProp
       toast.error(noteErr);
       return;
     }
-    setUploading(true);
+    if (needsConsent && !consentChecked) {
+      toast.error('请先勾选同意个人信息处理告知');
+      return;
+    }
+    setSubmitting(true);
     try {
-      const resume = await repo.files.uploadResume(file, setProgress);
-      setSubmitting(true);
-      const app = await repo.applications.submit({ jobId: job.id, resume, note });
+      // 仅用户主动确认后，才向后端确认个人信息处理告知
+      if (needsConsent) {
+        const u = await repo.auth.confirmPrivacyConsent();
+        setUser(u);
+      }
+      await repo.applications.submit({ jobId: job.id, resumeFile: file, note });
       toast.success('申请提交成功，状态为「处理中」');
       reset();
       onSubmitted();
       onClose();
-      void app;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '提交失败，请重试');
     } finally {
-      setUploading(false);
       setSubmitting(false);
     }
   };
@@ -66,10 +75,16 @@ export function ApplyDialog({ job, open, onClose, onSubmitted }: ApplyDialogProp
       title={`申请加入【${job.title}】`}
       footer={
         <>
-          <Button variant="secondary" onClick={() => { reset(); onClose(); }}>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              reset();
+              onClose();
+            }}
+          >
             取消
           </Button>
-          <Button onClick={submit} loading={uploading || submitting} disabled={!file}>
+          <Button onClick={submit} loading={submitting} disabled={!file}>
             提交申请
           </Button>
         </>
@@ -84,18 +99,6 @@ export function ApplyDialog({ job, open, onClose, onSubmitted }: ApplyDialogProp
           <FileUploader value={file} onChange={setFile} />
         </Field>
 
-        {uploading && (
-          <div>
-            <div className="mb-1 flex justify-between text-xs text-ink2">
-              <span>上传中…</span>
-              <span>{Math.round(progress * 100)}%</span>
-            </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-page">
-              <div className="h-full bg-primary transition-all" style={{ width: `${progress * 100}%` }} />
-            </div>
-          </div>
-        )}
-
         <Field label="补充说明（选填，可留空）" hint="请输入你的相关经验、技能或加入理由">
           <Textarea
             value={note}
@@ -105,6 +108,18 @@ export function ApplyDialog({ job, open, onClose, onSubmitted }: ApplyDialogProp
           />
           <div className="text-right text-xs text-muted">{note.length}/500</div>
         </Field>
+
+        {needsConsent && (
+          <label className="flex cursor-pointer items-start gap-2 rounded-md bg-warning-soft px-3 py-2 text-xs leading-relaxed text-ink2">
+            <input
+              type="checkbox"
+              checked={consentChecked}
+              onChange={(e) => setConsentChecked(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>我已阅读并同意《个人信息处理告知》，同意平台为处理本次申请收集并使用我的简历信息。</span>
+          </label>
+        )}
       </div>
     </Modal>
   );

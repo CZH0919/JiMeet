@@ -8,11 +8,10 @@ _frozen: datetime | None = None
 
 
 def now() -> datetime:
-    """
-    返回当前时间，若 freeze() 冻结则返回冻结时间。  
+    """读取统一业务时钟。
 
     Returns:
-        当前时间或冻结时间
+        datetime: freeze 生效时返回指定时间，否则返回 Django 当前时间。
     """
     if _frozen is not None:
         return _frozen
@@ -21,14 +20,15 @@ def now() -> datetime:
 
 @contextmanager
 def freeze(moment: datetime):
-    """
-    冻结时间源，返回上下文管理器。测试用。
-    通过 with freeze(moment): ... 使用，退出时恢复之前的时间源。
+    """临时覆盖进程内的业务时钟，并在退出时恢复。
+
+    覆盖值对该进程内调用 now 的代码可见，支持嵌套使用。
 
     Args:
-        moment: 冻结的时间点
+        moment: 测试使用的时间点，应为带时区的 datetime。
+
     Yields:
-        冻结的时间点
+        None: 上下文期间启用指定时间。
     """
     global _frozen
     previous = _frozen

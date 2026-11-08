@@ -2,13 +2,13 @@ import type { ApplicationStatus } from './models';
 
 export class DomainError extends Error {}
 
-const TERMINAL: ApplicationStatus[] = ['accepted', 'rejected', 'withdrawn'];
+const TERMINAL: ApplicationStatus[] = ['accepted', 'rejected', 'withdrawn', 'invalid'];
 
 export const isTerminal = (s: ApplicationStatus) => TERMINAL.includes(s);
 
-export const canWithdraw = (s: ApplicationStatus) => s === 'pending';
-export const canModify = (s: ApplicationStatus) => s === 'pending';
-export const canMark = (s: ApplicationStatus) => s === 'pending';
+export const canWithdraw = (s: ApplicationStatus) => s === 'processing';
+export const canModify = (s: ApplicationStatus) => s === 'processing';
+export const canMark = (s: ApplicationStatus) => s === 'processing';
 
 export type MarkAction = 'accept' | 'hold' | 'reject';
 
@@ -25,7 +25,7 @@ export function transition(
     case 'reject':
       return 'rejected';
     case 'hold':
-      return 'pending';
+      return 'processing';
     case 'withdraw':
       return 'withdrawn';
   }

@@ -116,9 +116,7 @@ export function AppHeader() {
                           </span>
                         )}
                       </div>
-                      <div className="mt-1 text-xs text-ink2">
-                        {user.role === 'student' ? '学号' : '工号'} {user.id} · {user.college}
-                      </div>
+                      <div className="mt-1 truncate text-xs text-ink2">{user.email ?? user.id}</div>
                     </div>
                     <Link
                       to="/me"

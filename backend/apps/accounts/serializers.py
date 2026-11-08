@@ -1,36 +1,7 @@
 """账号请求校验与本人资料输出，不在序列化器中查询数据库。"""
 from rest_framework import serializers
 
-
-class StrictSerializer(serializers.Serializer):
-    """拒绝未声明的输入字段，避免权限字段被静默忽略。"""
-
-    def to_internal_value(self, data):
-        """
-        先验证输入类型，再拒绝未知键。
-
-        Args:
-            data: 待反序列化的输入数据
-        Returns:
-            dict: 仅包含声明字段的反序列化数据
-        Raises:
-            ValidationError: 输入类型错误或包含未声明字段
-        """
-        if isinstance(data, dict):
-            unknown = data.keys() - self.fields.keys()
-            if unknown:
-                raise serializers.ValidationError({key: "不允许的字段" for key in unknown})
-        return super().to_internal_value(data)
-
-
-class StrictBooleanField(serializers.BooleanField):
-    """只接受 JSON 布尔值，拒绝字符串与数字的隐式转换。"""
-
-    def to_internal_value(self, data):
-        """检查实际类型后返回布尔值。"""
-        if type(data) is not bool:
-            self.fail("invalid", input=data)
-        return data
+from apps.core.serializers import StrictBooleanField, StrictSerializer
 
 
 class DevLoginSerializer(StrictSerializer):
@@ -49,13 +20,15 @@ class ProfileUpdateSerializer(StrictSerializer):
 
 
 def profile_data(user) -> dict:
-    """
-    输出本人可见资料
+    """序列化当前用户自己的资料。
+
+    包含姓名和邮箱，只用于本人资料或登录响应，不用作公开用户摘要。
 
     Args:
-        user: 用户对象
+        user: 已认证的本人 User 实例。
+
     Returns:
-        dict: 包含 uid、昵称、姓名、角色、管理员标记、邮箱、邮件通知开关、隐私协议同意标记的字典
+        dict: uid、nickname、name、email、role、is_admin、email_notify_enabled、privacy_consented。
     """
     return {
         "uid": user.uid, "nickname": user.nickname, "name": user.name,

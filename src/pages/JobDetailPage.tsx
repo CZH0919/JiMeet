@@ -5,10 +5,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { repo } from '@/data';
 import { useAsync } from '@/features/useAsync';
 import { useAuth } from '@/features/useAuth';
-import { canApply, formatDateTime } from '@/domain/jobStatus';
+import { canApply, formatDateTime, isNotice, PRIVACY_NOT_CONSENTED } from '@/domain/jobStatus';
 import { can } from '@/domain/permissions';
-import { ROLE_LABEL } from '@/domain/labels';
-import { FieldTag, JobTypeTag } from '@/components/job/JobTypeTag';
+import { APPLICATION_STATUS_LABEL, ROLE_LABEL } from '@/domain/labels';
+import { JobTypeTag, TagTag } from '@/components/job/JobTypeTag';
 import { QuotaProgress } from '@/components/job/QuotaProgress';
 import { JobStatusBadge } from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/Button';
@@ -34,8 +34,6 @@ export function JobDetailPage() {
   const [reasonErr, setReasonErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const [affected, setAffected] = useState<{ pending: number; accepted: number }>({ pending: 0, accepted: 0 });
-
   const decision = useMemo(() => (job ? canApply(job, user) : { ok: false, reason: '' }), [job, user]);
 
   if (loading) return <PageLoader />;
@@ -45,18 +43,14 @@ export function JobDetailPage() {
   const isOwner = can.editJob(user, job);
   const isModerator = can.moderateJob(user, job);
 
-  const fetchAffected = async () => {
-    try {
-      const page = await repo.applications.listForJob(job.id, { page: 1, pageSize: 200 });
-      setAffected({
-        pending: page.items.filter((a) => a.status === 'pending').length,
-        accepted: page.items.filter((a) => a.status === 'accepted').length,
-      });
-    } catch {
-      setAffected({ pending: 0, accepted: 0 });
-    }
-    setDeleteOpen(true);
-  };
+  // 详情接口优先用后端 permissions（含服务器权威判定），mock 通知回退到本地规则。
+  // 「未确认个人信息处理告知」是可在申请弹窗内完成确认的软阻塞，不能因它禁用按钮挡住弹窗入口。
+  const privacyBlock =
+    job.permissions?.applyBlockedCode === PRIVACY_NOT_CONSENTED &&
+    job.status === 'open' &&
+    new Date(job.deadline).getTime() >= Date.now();
+  const applyOk = job.permissions ? job.permissions.canApply || privacyBlock : decision.ok;
+  const applyReason = job.permissions?.applyBlockedReason || (decision.ok ? '' : decision.reason);
 
   const doClose = async () => {
     setBusy(true);
@@ -113,38 +107,45 @@ export function JobDetailPage() {
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <JobTypeTag type={job.type} />
-          <FieldTag field={job.field} />
-          <span className="text-sm text-ink2">发布者 {job.publisher.name}（{ROLE_LABEL[job.publisher.role]}）</span>
+          {job.tags.map((t) => (
+            <TagTag key={t.id} tag={t} />
+          ))}
+          <span className="text-sm text-ink2">
+            发布者 {job.publisher.name}（{ROLE_LABEL[job.publisher.role]}）
+          </span>
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-4 rounded-lg bg-page p-5 sm:grid-cols-3">
           <InfoItem icon={<CalendarClock size={16} />} label="截止时间" value={formatDateTime(job.deadline)} />
-          <InfoItem icon={<Users size={16} />} label="计划招募人数" value={`${job.recruitCount} 人`} />
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-ink2">当前已接收人数</span>
-            <QuotaProgress accepted={job.acceptedCount} total={job.recruitCount} />
-          </div>
+          {!isNotice(job) && (
+            <>
+              <InfoItem icon={<Users size={16} />} label="计划招募人数" value={`${job.maxHeadcount} 人`} />
+              <div className="flex flex-col gap-1">
+                <span className="text-xs text-ink2">当前已接受人数</span>
+                <QuotaProgress accepted={job.acceptedCount} total={job.maxHeadcount} />
+              </div>
+            </>
+          )}
         </div>
 
         <div className="mt-6">
           <h2 className="text-base font-semibold text-ink">需求与补充说明</h2>
           <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink2">{job.description}</p>
-          {job.requirement && (
-            <div className="mt-3 rounded-md border-l-2 border-primary bg-primary-soft px-4 py-3 text-sm text-ink2">
-              {job.requirement}
-            </div>
-          )}
         </div>
 
         <div className="mt-6 text-xs text-muted">发布于 {formatDateTime(job.createdAt)}</div>
 
-        {/* 申请入口（学生） */}
+        {/* 申请入口 */}
         <div className="mt-6 border-t border-line pt-6">
-          {job.myApplicationStatus ? (
-            <div className="rounded-md bg-primary-soft px-4 py-3 text-sm text-primary">
-              你已申请该招聘 · 当前状态「{job.myApplicationStatus === 'pending' ? '处理中' : job.myApplicationStatus}」
+          {isNotice(job) ? (
+            <div className="rounded-md bg-warning-soft px-4 py-3 text-sm text-warning">
+              竞赛通知仅作信息展示，不可申请加入或投递简历。
             </div>
-          ) : decision.ok ? (
+          ) : job.myApplicationStatus ? (
+            <div className="rounded-md bg-primary-soft px-4 py-3 text-sm text-primary">
+              你已申请该招聘 · 当前状态「{APPLICATION_STATUS_LABEL[job.myApplicationStatus]}」
+            </div>
+          ) : applyOk ? (
             <div className="flex flex-col items-start gap-2">
               <Button size="lg" onClick={() => setApplyOpen(true)}>
                 申请加入
@@ -156,7 +157,7 @@ export function JobDetailPage() {
               <Button size="lg" disabled>
                 申请加入
               </Button>
-              <p className="text-xs text-ink2">{decision.reason}</p>
+              <p className="text-xs text-ink2">{applyReason}</p>
             </div>
           )}
         </div>
@@ -164,24 +165,33 @@ export function JobDetailPage() {
         {/* 发布者管理区 */}
         {isOwner && (
           <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-line pt-6">
-            <Link to={`/jobs/${job.id}/edit`}>
-              <Button variant="secondary">
-                <Pencil size={15} /> 编辑修改
-              </Button>
-            </Link>
-            <Link to={`/jobs/${job.id}/applications`}>
-              <Button variant="secondary">
-                <Users size={15} /> 招聘申请管理（{job.applicationCount}）
-              </Button>
-            </Link>
             {job.status === 'open' && (
+              <Link to={`/jobs/${job.id}/edit`}>
+                <Button variant="secondary">
+                  <Pencil size={15} /> 编辑修改
+                </Button>
+              </Link>
+            )}
+            {!isNotice(job) && (
+              <Link to={`/jobs/${job.id}/applications`}>
+                <Button variant="secondary">
+                  <Users size={15} /> 招聘申请管理（{job.applicationCount}）
+                </Button>
+              </Link>
+            )}
+            {!isNotice(job) && job.status === 'open' && (
               <Button variant="secondary" onClick={() => setCloseOpen(true)}>
                 手动关闭招聘
               </Button>
             )}
-            <Button variant="danger-outline" onClick={fetchAffected}>
-              <Trash2 size={15} /> 删除
-            </Button>
+            {job.status === 'open' && (
+              <Button variant="danger-outline" onClick={() => setDeleteOpen(true)}>
+                <Trash2 size={15} /> 删除
+              </Button>
+            )}
+            {job.status !== 'open' && (
+              <span className="text-xs text-muted">该招聘已结束，不可再修改、删除或手动关闭。</span>
+            )}
           </div>
         )}
       </div>
@@ -222,18 +232,7 @@ export function JobDetailPage() {
       <ConfirmDialog
         open={deleteOpen}
         title="删除招聘"
-        description={
-          <div className="flex flex-col gap-2">
-            <p>删除操作不可逆，请确认。删除后将一并删除该招聘下的全部申请记录。</p>
-            {(affected.pending > 0 || affected.accepted > 0) && (
-              <p className="font-medium text-danger">
-                影响范围：{affected.pending > 0 && `${affected.pending} 条处理中申请`}
-                {affected.pending > 0 && affected.accepted > 0 && '、'}
-                {affected.accepted > 0 && `${affected.accepted} 条已接受申请`}
-              </p>
-            )}
-          </div>
-        }
+        description="删除操作不可逆，请确认。相关处理中/已接受申请将被标记为「已失效」并通知申请人。"
         confirmText="确认删除"
         loading={busy}
         onConfirm={doDelete}

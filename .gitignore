@@ -1,5 +1,12 @@
 # 依赖
 node_modules/
+backend/.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 运行时数据（上传的简历等，不提交）
+backend/var/
 
 # 构建产物
 dist/
