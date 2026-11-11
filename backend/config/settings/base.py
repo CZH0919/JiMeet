@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     "apps.recruitments",
     "apps.applications",
     "apps.notifications",
+    "apps.announcements",
     "apps.files",
     "apps.chat",
     "apps.audit",

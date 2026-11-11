@@ -36,6 +36,12 @@ To AI:
 > 2. AuditLog 需记录“权限被拒绝的请求”，但 `actor_id`、`target_id` 为 NOT NULL，未登录请求和对象不存在的请求无法入库。两者改为可空，`actor_role`、`actor_is_admin` 随 `actor_id` 同为空或同非空，并新增表级 CHECK；其余操作的操作者必填由应用层校验。
 > 3. 0 第 3 条要求枚举字段加 CHECK，但 `Notification.type`、`AuditLog.action` 没有。保持设计不变，在 0 第 3 条注明这两个有意不加 CHECK 的例外。
 >
+> v0.4（2026-11-11）：新增公告功能。
+> 1. 新增 1.9 Announcement 公告表，不复用 Recruitment：公告没有人数、截止时间、状态机和申请流程，混入会被招募列表、搜索及定时任务误处理，且 Recruitment 的 CHECK 约束均围绕招募状态设计。
+> 2. 公告通过可空外键 `recruitment_id` 关联招募，作为招募链接；按 FR-09 增加必填的时间类型与时间值（报名截止/活动时间）以及可空的相关网站。
+> 3. 权限：发布需 `is_admin`；编辑（含置顶）仅发布者本人；删除为发布者本人或任一管理员。删除理由可选，记录在 AuditLog.reason，不在公告表另设字段。
+> 4. 预留置顶字段 `is_pinned`，只通过编辑接口修改，不设独立的置顶接口，置顶变更与编辑合并记 `announcement_update` 审计；发布公告不生成站内通知与邮件。
+>
 > 个性化推送、举报功能后续再加，本版不建表（Django 加表成本低，可随时迁移补上）。
 > 
 >
@@ -323,8 +329,8 @@ ChatMessage：
 | actor_id | BIGINT | 可空，FK → app_user.id | 操作者；未登录请求被拒绝时为 NULL，其余操作必填（应用层校验） |
 | actor_role | VARCHAR(32) | 可空 | 操作时的基础身份（student / teacher）；`actor_id` 为 NULL 时同为 NULL |
 | actor_is_admin | BOOLEAN | 可空 | 操作时是否以管理员权限执行；`actor_id` 为 NULL 时同为 NULL |
-| action | VARCHAR(32) | NOT NULL | 动作，如 recruitment_delete / admin_delete / resume_view / application_update / permission_denied |
-| target_type | VARCHAR(32) | NOT NULL | 对象类型，如 recruitment / application |
+| action | VARCHAR(32) | NOT NULL | 动作，如 recruitment_delete / admin_delete / resume_view / application_update / permission_denied / announcement_publish / announcement_update / announcement_delete |
+| target_type | VARCHAR(32) | NOT NULL | 对象类型，如 recruitment / application / announcement |
 | target_id | BIGINT | 可空 | 对象 id；请求的对象不存在时为 NULL |
 | reason | TEXT | 可空 | 原因（管理员删除时必填，在应用层校验） |
 | created_at | TIMESTAMPTZ | NOT NULL | 操作时间 |
@@ -334,9 +340,56 @@ ChatMessage：
 索引：`(target_type, target_id)`，`(actor_id, created_at DESC)`。
 
 #### 设计细节
-1. 必须记录的操作：管理员权限的行使、用户删除本人发布的招聘、发布者查看申请人简历、申请人修改申请、权限被拒绝的请求。
+1. 必须记录的操作：管理员权限的行使、用户删除本人发布的招聘、发布者查看申请人简历、申请人修改申请、权限被拒绝的请求、管理员发布公告，发布者编辑公告（含置顶变更），发布者或管理员删除公告。
 2. 日志自每条记录的 created_at 起至少保留一年；业务操作只追加，不提供修改与删除接口。后台留存清理任务仅可删除已满一年的日志。申请明细在 180 天后清理时，审计记录按本规则独立保留，不能为了宣称匿名化提前删改审计。target_id 是无外键的历史对象标识，对应申请明细删除后允许目标不存在。
 3. 日志中不写入认证凭证、简历内容、原始文件名、补充说明或申请人与招聘的额外映射；reason 仅记录必要的操作原因，不复制申请明细。申请清理后不另存已删除对象的快照或身份对照表。审计记录仍可能识别操作者，这是至少一年审计留存要求的明确例外，仅供授权审计使用，不作为普通申请查询入口。
+
+### 1.9 Announcement 公告
+对应需求 FR-09（竞赛与活动公告）。由管理员发布；发布者可编辑，发布者或管理员可删除；所有已登录用户可查看列表和详情，并可通过关联的招募链接进入招募。
+
+| 字段名称 | 数据类型 | 约束 | 说明 |
+|---------|---------|------|-----|
+| id | BIGINT | PRIMARY KEY 自增 | 公告标识 |
+| author_id | BIGINT | NOT NULL，FK → app_user.id | 发布公告的管理员，PROTECT |
+| title | VARCHAR(100) | NOT NULL | 竞赛/活动名称 |
+| content | TEXT | NOT NULL | 公告正文，含报名方式等其他相关信息 |
+| time_kind | VARCHAR(16) | NOT NULL，CHECK (time_kind IN ('deadline','event')) | 时间类型：deadline(报名截止时间), event(活动时间) |
+| event_at | TIMESTAMPTZ | NOT NULL | 与 time_kind 对应的时间值 |
+| link_url | VARCHAR(500) | 可空 | 相关网站；格式由应用层校验 |
+| recruitment_id | BIGINT | 可空，FK → recruitment.id | 关联的招募（招募链接）；为空表示纯文字公告，PROTECT |
+| is_pinned | BOOLEAN | NOT NULL，默认 FALSE | 是否置顶，列表排序用 |
+| created_at | TIMESTAMPTZ | NOT NULL | 发布时间 |
+| updated_at | TIMESTAMPTZ | NOT NULL | 最近编辑时间 |
+| deleted_at | TIMESTAMPTZ | 可空 | 软删除时间；非空表示已删除，不在任何列表和详情中出现 |
+
+表级约束：
+```sql
+ALTER TABLE announcement ADD CONSTRAINT announcement_time_kind_chk
+    CHECK (time_kind IN ('deadline','event'));
+```
+
+索引：
+```sql
+-- 公告列表：置顶优先，再按发布时间倒序；仅含未删除公告
+CREATE INDEX announcement_list_idx ON announcement (is_pinned DESC, created_at DESC) WHERE deleted_at IS NULL;
+-- 某招募被哪些公告引用
+CREATE INDEX announcement_recruitment_idx ON announcement (recruitment_id) WHERE recruitment_id IS NOT NULL;
+```
+
+#### 设计细节
+1. 权限（均为应用层校验，不看 `is_staff`；未登录用户一律不可查看）：
+   - 发布：`is_admin` 用户；
+   - 编辑：仅 `author_id` 等于当前用户的发布者，其他管理员也不能编辑；
+   - 删除：发布者本人，或任一 `is_admin` 用户；
+   - 置顶：修改 `is_pinned`，只通过编辑接口修改，不设独立的置顶接口；由于发布者本来就是管理员，不另做限制；
+   - 查看：已登录用户。
+2. 删除为软删除（设置 `deleted_at`）。删除理由可选，写入 AuditLog.reason，公告表不另设字段。
+3. 发布、编辑（含置顶变更）、删除均写入 AuditLog：`action` 取 announcement_publish / announcement_update / announcement_delete，`target_type` 为 `announcement`。
+4. 列表按 `is_pinned DESC, created_at DESC, id DESC` 排序；没有任何公告置顶时即为 FR-09 要求的按发布时间倒序。
+5. `event_at` 是否晚于当前时间依赖 `now()`，不用 CHECK，由应用层校验；`title`、`content`、`time_kind`、`event_at` 为必填。
+6. 发布公告不生成站内通知和邮件，不关联 Notification，因此不影响 1.5、1.6 的清理逻辑。
+7. `recruitment_id` 指向的招募被软删除、关闭或满员后，公告仍保留；公告详情返回时按招募当前状态判断链接是否可用，具体逻辑由后端处理。招募的申请留存清理只删申请明细，不删除 Recruitment 行，不影响本表。
+8. 公告不属于 Recruitment 的子类型，不进入招募的列表、搜索和定时任务。
 
 ## 2 表关系概览
 ```
@@ -348,6 +401,8 @@ app_user 1 ──< notification ──< email_log
 app_user >──< app_user                （通过 chat_conversation）
 chat_conversation 1 ──< chat_message
 app_user 1 ──< audit_log
+app_user 1 ──< announcement    （管理员发布）
+recruitment 1 ──< announcement        （可选，招募链接）
 ```
 
 ## 3 本版暂不建表（后续按需追加）

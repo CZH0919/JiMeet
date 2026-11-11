@@ -13,6 +13,7 @@ BUSINESS_MODELS = [
     ("applications", "Application"),
     ("notifications", "Notification"),
     ("notifications", "EmailLog"),
+    ("announcements", "Announcement"),
     ("audit", "AuditLog"),
     ("chat", "ChatConversation"),
     ("chat", "ChatMessage"),
