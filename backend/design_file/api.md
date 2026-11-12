@@ -43,6 +43,13 @@
 | GET | `/notifications/unread-count` | 可用 |
 | POST | `/notifications/{id}/read` | 可用 |
 | POST | `/notifications/read-all` | 可用 |
+| GET | `/announcements` | 待实现（数据层已完成） |
+| GET | `/announcements/{id}` | 待实现（数据层已完成） |
+| POST | `/announcements` | 待实现（数据层已完成） |
+| PATCH | `/announcements/{id}` | 待实现（数据层已完成） |
+| DELETE | `/announcements/{id}` | 待实现（数据层已完成） |
+
+公告接口（第 8 章）的数据库层已完成，视图与序列化尚未实现，上表“待实现”的 5 个路径暂不可调用，不计入上述“可用”数量。
 
 `/applications/{id}/read` 用于确认申请修改；通知已读使用 `/notifications/{id}/read` 或 `/notifications/read-all`。
 
@@ -515,9 +522,34 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 
 通知 type 沿用 `backend/apps/notifications/types.py`：`application_submitted`、`application_accepted`、`application_rejected`、`application_withdrawn`、`application_updated`、`recruitment_closed`、`recruitment_updated`、`recruitment_deleted`、`admin_removed`。读取申请列表或通知列表不会自动标记通知已读。
 
-## 8. 状态与一致性规则
+## 8. 公告接口（FR-09）
 
-### 8.1 时间与删除边界
+状态：数据库层（模型、迁移、查询与写入函数）已完成；HTTP 视图、序列化与路由由后端协作者实现，本章为接口契约。表结构见 `backend/design_file/design_manuscript/database.md` 1.9，实现计划见同目录 `announcement_plan.md`。
+
+Announcement 对象建议字段：`id`、`title`、`content`、`time_kind`（`deadline` 报名截止时间 / `event` 活动时间）、`event_at`、`link_url`（可空）、`recruitment_id`（可空，关联招募）、`is_pinned`、`created_at`、`updated_at`，以及发布者的对外信息。发布者只返回 `uid` 与昵称，不返回 `real_id`、邮箱等内部信息。
+
+### 注意，下面的还接口未实现，是一个参考，若有更好设计也可修改 to 后端2位
+| 接口 | 权限 | 输入与行为 | 成功 data |
+| --- | --- | --- | --- |
+| GET /announcements | 已登录 | 仅未删除；按 `is_pinned DESC, created_at DESC, id DESC`，无置顶时即发布时间倒序；分页 | 分页 Announcement |
+| GET /announcements/{id} | 已登录 | 不存在或已删除为 404 | Announcement |
+| POST /announcements | `is_admin` 用户 | 必填 `title`（1～100 字）、`content`、`time_kind`、`event_at`；可选 `link_url`（最多 500 字）、`recruitment_id`、`is_pinned` | 201，Announcement |
+| PATCH /announcements/{id} | 仅发布者本人 | 上述字段均可部分修改，`is_pinned` 也在此修改；其他管理员不能编辑 | 200，Announcement |
+| DELETE /announcements/{id} | 发布者本人或任一 `is_admin` 用户 | 软删除；JSON `reason` 可选；重复删除为 404 | 200，null |
+
+数据层写入函数在 `backend/apps/announcements/services.py`：`create_announcement`、`update_announcement`、`soft_delete_announcement`；查询函数在 `selectors.py`：`list_announcements`、`get_announcement`。视图层负责权限判断和字段校验，函数本身不判断权限。
+
+约定：
+- 未登录返回 401。非发布者编辑、非发布者且非管理员删除返回 403。
+- 置顶、取消置顶没有独立接口，只通过 PATCH 的 `is_pinned` 修改，与其他字段编辑合并记同一条审计。
+- 每次发布、编辑（含置顶变更）、删除都在同一事务内写入审计 `announcement_publish`、`announcement_update`、`announcement_delete`，`target_type` 为 `announcement`；删除理由写入审计的 `reason`。
+- `event_at` 是否晚于当前时间、`link_url` 格式和 `recruitment_id` 是否存在由视图层校验，数据库只保证 `time_kind` 取值、`event_at` 非空和外键存在。
+- 关联招募被删除、关闭或满员后公告仍保留；详情是否展示可用的招募链接由视图按招募当前状态决定。
+- 发布公告不生成站内通知和邮件。
+
+## 9. 状态与一致性规则
+
+### 9.1 时间与删除边界
 
 - `now >= deadline` 停止新投递；未满员的关闭招募仅在 `now < closed_at + 7 天` 时允许发布者处理已有申请，到七天边界自动拒绝剩余 processing。
 - 满员优先于关闭；处理中的申请被自动拒绝后不能修改或撤回。暂留不延长处理窗口。
@@ -525,7 +557,7 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 - 留存期从 `closed_at`、`full_at`、`deleted_at` 最早的非空时间起算 180 天，后续操作不重新计时。到期即禁止申请明细、简历及关联通知访问；物理清理仍属预留工作。
 - 读取不得清除未读标记。时间到期的展示状态、权限与筛选应一致；数据库状态补执行和通知由既有状态工具在写操作或同步命令中完成。
 
-### 8.2 事务与资源一致性
+### 9.2 事务与资源一致性
 
 新建招募与标签关联原子保存。已有招募及申请的写操作先独立提交必要的到期状态补执行，再按招募锁、申请锁的顺序执行业务事务。业务校验失败不撤销已提交的到期状态；状态、人数及产生的通知和审计随业务事务提交或回滚。
 
