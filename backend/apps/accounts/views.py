@@ -12,12 +12,36 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.serializers import DevLoginSerializer, ProfileUpdateSerializer, profile_data
-from apps.accounts.services import give_privacy_consent, update_profile
+from apps.accounts.serializers import (
+    DevLoginSerializer,
+    LoginSerializer,
+    ProfileUpdateSerializer,
+    RegisterSerializer,
+    profile_data,
+)
+from apps.accounts.services import (
+    PASSWORD_BACKEND,
+    give_privacy_consent,
+    login_with_password,
+    register_with_password,
+    update_profile,
+)
 from apps.accounts.sso import DevSSOProvider
 from apps.core.errors import ErrorCode, NotFound
-from apps.core.responses import envelope, ok
+from apps.core.responses import created, envelope, ok
 from apps.core.views import PrivateAPIView
+
+
+def _client_ip(request) -> str:
+    """取请求来源 IP 供失败限流计数。
+
+    Args:
+        request: DRF 请求。
+
+    Returns:
+        str: REMOTE_ADDR；缺失时为空字符串（对应键不计数）。
+    """
+    return (request._request.META.get("REMOTE_ADDR") or "").strip()
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -37,6 +61,74 @@ class CsrfView(APIView):
             Response: HTTP 200，data.csrf_token 为可放入请求头的令牌，同时设置 CSRF Cookie。
         """
         return ok({"csrf_token": get_token(request._request)})
+
+
+class RegisterView(APIView):
+    """邮箱密码注册公开入口；匿名请求强制 CSRF。"""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        """POST /api/v1/auth/register：注册普通账号并建立会话。
+
+        Args:
+            request: JSON 必填 email、password、name，可选 nickname、role；
+                匿名请求必须提供匹配的 CSRF Cookie 与令牌。
+
+        Returns:
+            Response: HTTP 201，data 为本人资料；建立 Session 并轮换 CSRF 令牌，
+                响应禁止缓存。
+
+        Raises:
+            PermissionDenied: CSRF 校验失败，返回 403。
+            ValidationError: 输入字段不合法，返回 400。
+            ValidationFailed: 邮箱冲突或密码不合规，返回 400。
+            BizError: 失败限流，返回 429 RATE_LIMITED。
+        """
+        SessionAuthentication().enforce_csrf(request)
+        serializer = RegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = register_with_password(ip=_client_ip(request), **serializer.validated_data)
+        login(request._request, user, backend=PASSWORD_BACKEND)
+        response = created(profile_data(user))
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+class LoginView(APIView):
+    """邮箱密码登录公开入口；匿名请求强制 CSRF。"""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        """POST /api/v1/auth/login：凭邮箱密码建立会话。
+
+        不存在邮箱、错误或不可用密码统一 401，不泄露账号是否存在；
+        凭据正确但账号停用返回 403。
+
+        Args:
+            request: JSON 必填 email、password；匿名请求也须通过 CSRF 校验。
+
+        Returns:
+            Response: HTTP 200，data 为本人资料；建立 Session 并轮换 CSRF 令牌，
+                响应禁止缓存。
+
+        Raises:
+            PermissionDenied: CSRF 校验失败，返回 403。
+            ValidationError: 输入字段不合法，返回 400。
+            BizError: 凭据不合法 401 AUTH_FAILED；失败限流 429 RATE_LIMITED。
+            Forbidden: 账号已停用，返回 403。
+        """
+        SessionAuthentication().enforce_csrf(request)
+        serializer = LoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = login_with_password(ip=_client_ip(request), **serializer.validated_data)
+        login(request._request, user)
+        response = ok(profile_data(user))
+        response["Cache-Control"] = "private, no-store"
+        return response
 
 
 class DevLoginView(APIView):

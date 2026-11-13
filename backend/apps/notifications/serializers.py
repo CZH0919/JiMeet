@@ -34,11 +34,12 @@ class NotificationQuerySerializer(StrictQuerySerializer):
 class NotificationSerializer(serializers.ModelSerializer):
     recruitment_id = serializers.IntegerField(read_only=True, allow_null=True)
     application_id = serializers.IntegerField(read_only=True, allow_null=True)
+    announcement_id = serializers.IntegerField(read_only=True, allow_null=True)
 
     class Meta:
         model = Notification
         fields = (
             "id", "type", "title", "content", "recruitment_id",
-            "application_id", "is_read", "created_at",
+            "application_id", "announcement_id", "is_read", "created_at",
         )
         read_only_fields = fields

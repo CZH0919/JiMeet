@@ -1,11 +1,19 @@
 """账号登录、个人资料与隐私确认服务。"""
+import uuid
+
+from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 
+from apps.accounts import ratelimit
 from apps.accounts.identity import is_tongji_email, resolve_role
 from apps.accounts.models import User
 from apps.accounts.sso import SSOIdentity
 from apps.core import clock
 from apps.core.errors import BizError, ErrorCode, Forbidden, ValidationFailed
+
+PASSWORD_BACKEND = "apps.accounts.backends.EmailPasswordBackend"
 
 
 def _auth_failed() -> BizError:
@@ -15,6 +23,118 @@ def _auth_failed() -> BizError:
         BizError: AUTH_FAILED、HTTP 401；由调用方决定何时抛出。
     """
     return BizError("认证身份无效或存在冲突", code=ErrorCode.AUTH_FAILED, http_status=401)
+
+
+def _register_rejected(email: str, ip: str, details: dict) -> ValidationFailed:
+    """记录一次注册失败并构造校验异常。
+
+    Args:
+        email: 已规范化的邮箱，用于邮箱键计数。
+        ip: 来源 IP，用于 IP 键计数；可为空字符串。
+        details: 对外字段校验详情。
+
+    Returns:
+        ValidationFailed: 携带详情的 400 异常，由调用方抛出。
+    """
+    ratelimit.record_failure(scope="email", value=email, kind=ratelimit.KIND_REGISTER)
+    ratelimit.record_failure(scope="ip", value=ip, kind=ratelimit.KIND_REGISTER)
+    return ValidationFailed(details=details)
+
+
+def register_with_password(
+    *, email: str, password: str, name: str, nickname: str | None = None,
+    role: str = "student", ip: str = "",
+) -> User:
+    """邮箱密码注册普通账号，校验域名与密码策略，不覆盖已有账号。
+
+    注册成功返回的用户未登录；建立会话由调用方完成。
+    域名不符、邮箱冲突与密码不合规计为失败，参与失败限流。
+
+    Args:
+        email: 注册邮箱，服务内去除首尾空白并小写化。
+        password: 自设密码，须通过 Django 密码验证器。
+        name: 展示姓名，1～32 字，仅作未核验展示信息。
+        nickname: 可选昵称；缺省由管理器生成，不取自姓名或邮箱。
+        role: 展示身份标签 student 或 teacher，不作授权依据。
+        ip: 来源 IP，用于失败限流；可为空字符串。
+
+    Returns:
+        User: 新建的普通用户（is_admin=False，隐私未确认）。
+
+    Raises:
+        ValidationFailed: 邮箱域名不合规、邮箱已注册（含并发与大小写变体）、
+            密码不合规或姓名/昵称不合规，400。
+        BizError: 失败次数超限，RATE_LIMITED、HTTP 429。
+    """
+    normalized = (email or "").strip().lower()
+    ratelimit.check_limit(scope="email", value=normalized, kind=ratelimit.KIND_REGISTER)
+    ratelimit.check_limit(scope="ip", value=ip, kind=ratelimit.KIND_REGISTER)
+    if not is_tongji_email(normalized):
+        raise _register_rejected(normalized, ip, {"email": "须为 @tongji.edu.cn 邮箱"})
+    clean_name = (name or "").strip()
+    if not 1 <= len(clean_name) <= 32:
+        raise _register_rejected(normalized, ip, {"name": "姓名须为 1 至 32 字"})
+    if nickname is not None and not 1 <= len(nickname.strip()) <= 32:
+        raise _register_rejected(normalized, ip, {"nickname": "昵称须为 1 至 32 字"})
+    # 使用未保存实例执行相似度校验，避免密码与邮箱、姓名相近。
+    candidate = User(email=normalized, name=clean_name)
+    try:
+        validate_password(password, user=candidate)
+    except DjangoValidationError as exc:
+        raise _register_rejected(
+            normalized, ip, {"password": "；".join(exc.messages)}
+        ) from None
+    try:
+        with transaction.atomic():
+            user = User.objects.create_user(
+                real_id=f"reg_{uuid.uuid4().hex[:24]}",
+                name=clean_name,
+                email=normalized,
+                password=password,
+                role=role,
+                is_admin=False,
+                **({"nickname": nickname.strip()} if nickname is not None else {}),
+            )
+    except IntegrityError:
+        # 大小写变体与并发重复注册命中唯一约束：不覆盖已有账号。
+        raise _register_rejected(normalized, ip, {"email": "该邮箱已注册"}) from None
+    ratelimit.clear_failures(scope="email", value=normalized, kind=ratelimit.KIND_REGISTER)
+    return user
+
+
+def login_with_password(*, email: str, password: str, ip: str = "") -> User:
+    """邮箱密码登录；失败统一 401，凭据正确但停用返回 403。
+
+    不存在邮箱、错误密码与不可用密码的失败口径一致，不泄露账号是否存在；
+    失败计数按邮箱键与 IP 键落库，成功登录清除邮箱键计数。
+
+    Args:
+        email: 登录邮箱，服务内去除首尾空白并小写化。
+        password: 原始密码。
+        ip: 来源 IP，用于失败限流；可为空字符串。
+
+    Returns:
+        User: 已启用的认证用户，会话建立由调用方完成。
+
+    Raises:
+        BizError: 凭据不合法，AUTH_FAILED、HTTP 401。
+        Forbidden: 凭据正确但账号已停用。
+        BizError: 失败次数超限，RATE_LIMITED、HTTP 429。
+    """
+    normalized = (email or "").strip().lower()
+    ratelimit.check_limit(scope="email", value=normalized, kind=ratelimit.KIND_LOGIN)
+    ratelimit.check_limit(scope="ip", value=ip, kind=ratelimit.KIND_LOGIN)
+    user = authenticate(email=normalized, password=password)
+    if user is None:
+        ratelimit.record_failure(scope="email", value=normalized, kind=ratelimit.KIND_LOGIN)
+        ratelimit.record_failure(scope="ip", value=ip, kind=ratelimit.KIND_LOGIN)
+        raise BizError("邮箱或密码不正确", code=ErrorCode.AUTH_FAILED, http_status=401)
+    if not user.is_active:
+        ratelimit.record_failure(scope="email", value=normalized, kind=ratelimit.KIND_LOGIN)
+        ratelimit.record_failure(scope="ip", value=ip, kind=ratelimit.KIND_LOGIN)
+        raise Forbidden("账号已停用")
+    ratelimit.clear_failures(scope="email", value=normalized, kind=ratelimit.KIND_LOGIN)
+    return user
 
 
 def login_with_sso(identity: SSOIdentity) -> User:

@@ -1,7 +1,7 @@
 """通知文案模板；context 只允许摘要字段，防止泄露简历或申请人信息。"""
 from apps.notifications import types
 
-_ALLOWED_CONTEXT = {"recruitment_title", "status_label", "link", "auto", "reason_label"}
+_ALLOWED_CONTEXT = {"recruitment_title", "announcement_title", "status_label", "link", "auto", "reason_label"}
 _TEMPLATES = {
     types.APPLICATION_SUBMITTED: ("收到新申请", "您的招聘《{recruitment_title}》收到一份新申请。"),
     types.APPLICATION_ACCEPTED: ("申请已接受", "您对《{recruitment_title}》的申请已被接受。"),
@@ -12,6 +12,7 @@ _TEMPLATES = {
     types.RECRUITMENT_UPDATED: ("招聘已更新", "您申请的招聘《{recruitment_title}》已更新，请查看最新信息。"),
     types.RECRUITMENT_DELETED: ("招聘已删除", "关联招聘《{recruitment_title}》已删除。"),
     types.ADMIN_REMOVED: ("招聘已被管理员删除", "您的招聘《{recruitment_title}》已被管理员删除。"),
+    types.ANNOUNCEMENT_ADMIN_REMOVED: ("公告已被管理员删除", "您的公告《{announcement_title}》已被管理员删除。"),
 }
 
 
@@ -20,7 +21,8 @@ def render(type: str, context: dict | None) -> tuple[str, str]:
 
     Args:
         type: 已定义通知类型。
-        context: 摘要映射或 None；允许 recruitment_title、status_label、link、auto、reason_label。
+        context: 摘要映射或 None；允许 recruitment_title、announcement_title、
+            status_label、link、auto、reason_label。
 
     Returns:
         tuple[str, str]: 标题与正文，不包含简历或申请说明。
@@ -34,7 +36,10 @@ def render(type: str, context: dict | None) -> tuple[str, str]:
     if context.keys() - _ALLOWED_CONTEXT:
         raise ValueError("通知 context 包含不允许的字段")
     title, template = _TEMPLATES[type]
-    content = template.format(recruitment_title=context.get("recruitment_title", "招聘"))
+    content = template.format(
+        recruitment_title=context.get("recruitment_title", "招聘"),
+        announcement_title=context.get("announcement_title", "公告"),
+    )
     if type == types.RECRUITMENT_CLOSED and context.get("auto") is False:
         content = "您的招聘《{}》已手动关闭。".format(context.get("recruitment_title", "招聘"))
     if type == types.APPLICATION_REJECTED and context.get("auto"):

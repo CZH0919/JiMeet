@@ -15,9 +15,11 @@ class Notification(models.Model):
     - `type`: 由应用层常量维护的通知类型，有意不加数据库 CHECK
     - `title` / `content`: 标题与正文，不应包含简历内容及完整个人信息
     - `recruitment` / `application`: 可空的关联对象，供跳转及留存清理使用
+    - `announcement`: 可空的关联公告（治理删除通知），与招聘/申请关联互斥
     - `is_read` / `created_at`: 已读标记与创建时间
 
-    申请事件同时填写招募与申请由通知服务保证，外键统一使用 PROTECT。
+    申请事件同时填写招募与申请由通知服务保证；公告关联与招聘/申请关联
+    互斥、申请必须同时关联招聘由表级 CHECK 保证，外键统一使用 PROTECT。
     """
 
     recipient = models.ForeignKey(
@@ -45,11 +47,32 @@ class Notification(models.Model):
         null=True,
         blank=True,
     )
+    announcement = models.ForeignKey(
+        "announcements.Announcement",
+        on_delete=models.PROTECT,
+        related_name="notifications",
+        verbose_name="关联公告",
+        null=True,
+        blank=True,
+    )
     is_read = models.BooleanField("已读", default=False, db_default=False)
     created_at = models.DateTimeField("创建时间", db_default=Now())
 
     class Meta:
         db_table = "notification"
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(announcement__isnull=True)
+                    | (Q(recruitment__isnull=True) & Q(application__isnull=True))
+                ),
+                name="notification_announcement_exclusive_chk",
+            ),
+            models.CheckConstraint(
+                condition=Q(application__isnull=True) | Q(recruitment__isnull=False),
+                name="notification_application_needs_recruitment_chk",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["recipient", "is_read", "-created_at"],

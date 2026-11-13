@@ -8,8 +8,11 @@ RECRUITMENT_CLOSED = "recruitment_closed"
 RECRUITMENT_UPDATED = "recruitment_updated"
 RECRUITMENT_DELETED = "recruitment_deleted"
 ADMIN_REMOVED = "admin_removed"
+ANNOUNCEMENT_ADMIN_REMOVED = "announcement_admin_removed"
 
 ALL = frozenset(value for name, value in list(globals().items()) if name.isupper() and isinstance(value, str))
 APPLICATION_EVENTS = frozenset(value for value in ALL if value.startswith("application_"))
 # 删除通知也可发给发布者，因此其申请关联由 service 按接收人身份判断。
 REQUIRES_APPLICATION = APPLICATION_EVENTS | {RECRUITMENT_UPDATED}
+# 公告治理通知只关联公告，与招聘/申请关联互斥。
+ANNOUNCEMENT_EVENTS = frozenset({ANNOUNCEMENT_ADMIN_REMOVED})

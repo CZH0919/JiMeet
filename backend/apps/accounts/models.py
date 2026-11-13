@@ -173,3 +173,30 @@ class User(AbstractBaseUser, PermissionsMixin):
             str: User(主键)。
         """
         return f"User({self.pk})"
+
+
+class AuthFailure(models.Model):
+    """
+    注册/登录失败计数记录，对应 database.md 4.2 的 auth_failure 表。
+
+    ### Attributes
+    - `key_hash`: 限流键的 SHA-256 摘要（邮箱或来源 IP），不保存明文
+    - `kind`: 失败发生的操作，login 或 register
+    - `created_at`: 失败发生时间；窗口计数与惰性清理按该时间过滤
+
+    采用插入即计数（INSERT-only），并发失败不会互相覆盖或丢失。
+    """
+
+    key_hash = models.CharField("键摘要", max_length=64)
+    kind = models.CharField("操作类型", max_length=16)
+    created_at = models.DateTimeField("失败时间", db_default=Now())
+
+    class Meta:
+        db_table = "auth_failure"
+        indexes = [
+            models.Index(fields=["key_hash", "created_at"], name="auth_failure_key_idx"),
+        ]
+
+    def __str__(self) -> str:
+        """返回仅含数据库主键的标识，不输出键摘要。"""
+        return f"AuthFailure({self.pk})"

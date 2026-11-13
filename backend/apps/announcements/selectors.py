@@ -6,12 +6,13 @@ def list_announcements():
     """查询未删除的公告。
 
     Returns:
-        QuerySet[Announcement]: 置顶优先，再按发布时间、主键倒序，预加载作者与关联招募。
+        QuerySet[Announcement]: 按发布时间、主键倒序稳定排序（本轮 HTTP 不按置顶排序），
+            预加载作者与关联招募。
     """
     return (
         Announcement.objects.filter(deleted_at__isnull=True)
         .select_related("author", "recruitment")
-        .order_by("-is_pinned", "-created_at", "-id")
+        .order_by("-created_at", "-id")
     )
 
 

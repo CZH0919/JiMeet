@@ -29,11 +29,14 @@ def visible_notifications(user, now):
         recruitment__isnull=False,
         recruitment__publisher_id=user.pk,
     )
-    unassociated = Q(application__isnull=True, recruitment__isnull=True)
+    related_announcement = Q(announcement__isnull=False)
+    unassociated = Q(
+        application__isnull=True, recruitment__isnull=True, announcement__isnull=True
+    )
 
     return (
         Notification.objects.filter(recipient=user)
-        .filter(related_application | related_recruitment | unassociated)
+        .filter(related_application | related_recruitment | related_announcement | unassociated)
         .alias(
             effective_closed_at=Case(
                 When(
