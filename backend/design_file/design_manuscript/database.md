@@ -43,6 +43,10 @@ To AI:
 > 4. 预留置顶字段 `is_pinned`，只通过编辑接口修改，不设独立的置顶接口，置顶变更与编辑合并记 `announcement_update` 审计；发布公告不生成站内通知与邮件。
 >
 > 个性化推送、举报功能后续再加，本版不建表（Django 加表成本低，可随时迁移补上）。
+>
+> v0.5（2026-11-14）：登记 Sprint2 数据变更方案，见第 4 章。依据 Sprint2 后端开发规划 §4「数据与兼容要求」与阶段 1 分工（zf 登记、czh 阶段 4 实施申请侧），只新增方案章节，不改动第 0～3 章既有设计；既有描述与本轮口径的差异在实施阶段随迁移同步修订。
+>
+> v0.6（2026-11-14）：Sprint2 阶段 3 实施后同步 1.5、1.9 的过时描述（规划阶段 3 明确授权“同步 api.md、公告和数据库设计说明”）：1.5 停止业务邮件待发记录并按 3.5 取消固定 180 天口径；1.9 落实本人删除与治理删除分入口、治理原因必填与治理通知、不按置顶排序、`recruitment_available` 可用性表达；新增 `notification.announcement_id` 迁移（notifications.0002，见 4.1）。
 > 
 >
 
@@ -268,9 +272,9 @@ CREATE INDEX application_applicant_idx ON application (applicant_id, created_at 
 索引：`(recipient_id, is_read, created_at DESC)`。
 
 #### 设计细节
-1. 通知由统一的 service 生成，申请状态流转、招聘修改/删除/关闭、管理员删除都调用同一个入口，保证可复用。
-2. 招聘采用软删除，删除时不级联删除通知。申请相关通知保留至该招聘的 180 天申请留存期满，届时按 1.4 显式清理；其他招聘通知保留，但不得包含申请明细或申请人与申请的身份映射。
-3. 申请事件通知，以及因招聘修改、关闭、删除而发给申请人的通知，均须同时填写 application_id 和 recruitment_id，便于到期清理；同一用户存在撤回后重投的多条记录时，通知按业务规则关联相应申请并避免重复发送。给发布者本人的纯招聘通知可不关联 application_id。同一事务内按用户邮件开关创建对应邮件待发送记录。邮件任务发送前重新检查通知是否存在、是否已到申请留存期限，与清理任务协调，不能在清理完成后继续从旧任务载荷发送申请邮件。
+1. 通知由统一的 service 生成，申请状态流转、招聘修改/删除/关闭、管理员删除都调用同一个入口，保证可复用。（Sprint2 阶段 3）公告治理删除通知复用同一入口，关联 `announcement_id`，与招聘/申请关联互斥，见第 4 章 4.1。
+2. 招聘采用软删除，删除时不级联删除通知。（Sprint2 适配）按需求 3.5 不设固定 180 天清理或隐藏：申请相关通知长期保留，物理清理仍属预留；旧清理口径待阶段 4/5 随留存规则适配移除。任何通知均不得包含申请明细或申请人与申请的身份映射。
+3. 申请事件通知，以及因招聘修改、关闭、删除而发给申请人的通知，均须同时填写 application_id 和 recruitment_id；同一用户存在撤回后重投的多条记录时，通知按业务规则关联相应申请并避免重复发送。给发布者本人的纯招聘通知可不关联 application_id。（Sprint2 阶段 3）业务事件只生成站内通知：不再创建 `EmailLog(PENDING)`，不再挂接邮件派发回调；`email_notify_enabled` 保留为兼容字段，不控制发信；`email_log` 旧数据保留。
 
 ### 1.6 EmailLog 邮件发送日志
 | 字段名称 | 数据类型 | 约束 | 说明 |
@@ -345,7 +349,7 @@ ChatMessage：
 3. 日志中不写入认证凭证、简历内容、原始文件名、补充说明或申请人与招聘的额外映射；reason 仅记录必要的操作原因，不复制申请明细。申请清理后不另存已删除对象的快照或身份对照表。审计记录仍可能识别操作者，这是至少一年审计留存要求的明确例外，仅供授权审计使用，不作为普通申请查询入口。
 
 ### 1.9 Announcement 公告
-对应需求 FR-09（竞赛与活动公告）。由管理员发布；发布者可编辑，发布者或管理员可删除；所有已登录用户可查看列表和详情，并可通过关联的招募链接进入招募。
+对应需求 FR-09（竞赛与活动公告）。由管理员发布；作者（管理员）可编辑与本人删除，任一管理员可经治理入口删除并通知作者；所有已登录用户可查看列表和详情，并可通过关联的招募链接进入招募。
 
 | 字段名称 | 数据类型 | 约束 | 说明 |
 |---------|---------|------|-----|
@@ -357,7 +361,7 @@ ChatMessage：
 | event_at | TIMESTAMPTZ | NOT NULL | 与 time_kind 对应的时间值 |
 | link_url | VARCHAR(500) | 可空 | 相关网站；格式由应用层校验 |
 | recruitment_id | BIGINT | 可空，FK → recruitment.id | 关联的招募（招募链接）；为空表示纯文字公告，PROTECT |
-| is_pinned | BOOLEAN | NOT NULL，默认 FALSE | 是否置顶，列表排序用 |
+| is_pinned | BOOLEAN | NOT NULL，默认 FALSE | 是否置顶；本轮 HTTP 不提供置顶能力、不参与排序，仅保留字段 |
 | created_at | TIMESTAMPTZ | NOT NULL | 发布时间 |
 | updated_at | TIMESTAMPTZ | NOT NULL | 最近编辑时间 |
 | deleted_at | TIMESTAMPTZ | 可空 | 软删除时间；非空表示已删除，不在任何列表和详情中出现 |
@@ -377,18 +381,19 @@ CREATE INDEX announcement_recruitment_idx ON announcement (recruitment_id) WHERE
 ```
 
 #### 设计细节
-1. 权限（均为应用层校验，不看 `is_staff`；未登录用户一律不可查看）：
-   - 发布：`is_admin` 用户；
-   - 编辑：仅 `author_id` 等于当前用户的发布者，其他管理员也不能编辑；
-   - 删除：发布者本人，或任一 `is_admin` 用户；
-   - 置顶：修改 `is_pinned`，只通过编辑接口修改，不设独立的置顶接口；由于发布者本来就是管理员，不另做限制；
+1. 权限（均为应用层校验，不看 `is_staff`；未登录用户一律不可查看；Sprint2 阶段 3 起业务服务在行锁内复核当前权限）：
+   - 发布：当前 `is_admin` 用户；
+   - 编辑与本人删除：当前 `is_admin` 且 `author_id` 等于当前用户，其他管理员也不能编辑；
+   - 治理删除：当前 `is_admin` 用户，独立入口（`DELETE /admin/announcements/{id}`），与本人删除入口分离；
+   - 置顶：数据库保留 `is_pinned` 字段，本轮 HTTP 不提供置顶能力（不可写、不参与排序），后续是否恢复见《修订说明与待确认事项》P-03；
    - 查看：已登录用户。
-2. 删除为软删除（设置 `deleted_at`）。删除理由可选，写入 AuditLog.reason，公告表不另设字段。
-3. 发布、编辑（含置顶变更）、删除均写入 AuditLog：`action` 取 announcement_publish / announcement_update / announcement_delete，`target_type` 为 `announcement`。
-4. 列表按 `is_pinned DESC, created_at DESC, id DESC` 排序；没有任何公告置顶时即为 FR-09 要求的按发布时间倒序。
-5. `event_at` 是否晚于当前时间依赖 `now()`，不用 CHECK，由应用层校验；`title`、`content`、`time_kind`、`event_at` 为必填。
-6. 发布公告不生成站内通知和邮件，不关联 Notification，因此不影响 1.5、1.6 的清理逻辑。
-7. `recruitment_id` 指向的招募被软删除、关闭或满员后，公告仍保留；公告详情返回时按招募当前状态判断链接是否可用，具体逻辑由后端处理。招募的申请留存清理只删申请明细，不删除 Recruitment 行，不影响本表。
+   - 公告作者被撤销管理员权限后，发布、编辑、本人删除与治理删除均被拒绝（含旧会话）。
+2. 删除为软删除（设置 `deleted_at`）。本人删除不需要原因；治理删除原因必填，写入 AuditLog.reason，公告表不另设字段。
+3. 发布、编辑、删除均写入 AuditLog：`action` 取 announcement_publish / announcement_update / announcement_delete，`target_type` 为 `announcement`；重复删除返回不存在/已删除结果，不重复写审计。
+4. 列表按 `created_at DESC, id DESC` 稳定排序（Sprint2 阶段 3 起不按置顶排序，原 `is_pinned DESC` 口径作废）。
+5. `event_at` 为带时区合法值即可，不限制必须晚于当前时间；已过时间不自动等于已删除，编辑不因历史时间被拒绝（《修订说明与待确认事项》2.3）；`title`、`content`、`time_kind`、`event_at` 为必填。
+6. 正常发布、编辑、本人删除不生成站内通知和邮件。治理删除在同一业务事务内完成软删除、审计与作者站内通知（`announcement_admin_removed`，含公告名称、处置结果、原因与公告引用），不产生邮件任务。
+7. `recruitment_id` 指向的招募被软删除、关闭或满员后，公告仍保留；公告详情以 `recruitment_available` 表达链接可用性（关联存在且未删除），已删除招募的公开详情不因公告恢复。写入时该招募须存在且未删除。招募的申请留存清理只删申请明细，不删除 Recruitment 行，不影响本表。
 8. 公告不属于 Recruitment 的子类型，不进入招募的列表、搜索和定时任务。
 
 ## 2 表关系概览
@@ -408,3 +413,44 @@ recruitment 1 ──< announcement        （可选，招募链接）
 ## 3 本版暂不建表（后续按需追加）
 1. 个性化推送（用户兴趣、权重）：第一版推送可直接按时间排序，需要时再加。
 2. 举报与管理员处理页面：需求整理建议后期添加。
+
+## 4 Sprint2 数据变更方案（2026-11-14 阶段 1 登记）
+
+本章为 Sprint2 已确认需求的数据方案、迁移归属与验证方法；均新增独立迁移，不重写历史迁移，不删除旧数据。
+
+### 4.1 通知的公告关联（zf，阶段 3，`notifications.0002`）
+
+| 变更 | 内容 |
+| --- | --- |
+| 字段 | `notification.announcement_id`：BIGINT 可空，FK → announcement.id，PROTECT；与 `recruitment_id`、`application_id` 并列的第三种目标关联 |
+| 互斥约束 | `announcement_id` 非空 ⇒ `recruitment_id`、`application_id` 均为空 |
+| 一致性约束 | `application_id` 非空 ⇒ `recruitment_id` 非空（申请通知必须同时关联招聘） |
+| 语义 | 公告治理删除通知（type=`announcement_admin_removed`）关联公告；与招聘/申请关联语义分开，旧通知数据保持兼容（新列为空） |
+| 验证 | 迁移在空库与既有数据上均可应用；模型级约束测试（互斥与一致性各一正一反）；旧通知读取兼容测试；治理删除事务内通知与审计一致性测试 |
+
+### 4.2 注册/登录失败计数表（zf，阶段 2，`accounts.0002`）
+
+| 变更 | 内容 |
+| --- | --- |
+| 新表 | `auth_failure`：id BIGINT 自增主键，`key_hash` CHAR(64)（邮箱或 IP 的 SHA-256 摘要，不落明文）、`kind` VARCHAR(16)（login/register）、`created_at` TIMESTAMPTZ |
+| 索引 | `(key_hash, created_at)` |
+| 用途 | 失败限流：600 秒窗口内同邮箱键 5 次、同 IP 键 20 次；采用插入即计数（INSERT），无读改写，保证并发失败不丢计数；登录成功按邮箱键删除计数行，窗口外记录惰性清理 |
+| 验证 | 并发失败计数一致性测试；窗口滑过自动恢复；成功登录清零；键为摘要不可逆推邮箱 |
+
+### 4.3 申请状态变更历史表（czh，阶段 4，`applications.0002`）
+
+| 变更 | 内容 |
+| --- | --- |
+| 新表 | `application_status_history`：id 自增主键；`application_id` FK → application（PROTECT）；`recruitment_id` FK → recruitment（PROTECT）；`from_status`、`to_status` VARCHAR(16)；`reason` VARCHAR(32)（accept / reject_manual / hold 不记 / withdraw / auto_full / auto_window / delete_invalid 等枚举）；`actor_id` 可空 FK → app_user（空表示系统来源）；`created_at` TIMESTAMPTZ |
+| 覆盖 | 接受、拒绝、撤回、满员自动拒绝、超时自动拒绝、删除失效；暂留不改变状态不入史 |
+| 边界 | 旧记录如无历史行，属于证据边界，不补写、不编造历史事件；`decided_at` 语义不变（失效时间仍取 `Recruitment.deleted_at`） |
+| 验证 | 每种状态流转各写一条的单测；并发接受/撤回竞争下历史与状态一致；删除后 `accepted_count=0` 可由历史追溯 |
+
+### 4.4 历史已删除招聘的人数修复（czh，阶段 4）
+
+| 变更 | 内容 |
+| --- | --- |
+| 问题 | 历史数据中存在已软删除但 `accepted_count` 未归零的招聘统计值，与 FR-05「删除后为零」不符 |
+| 修复 | 幂等数据修复（数据迁移或修复命令）：将 `deleted_at IS NOT NULL AND accepted_count <> 0` 的行置零；执行前留存修复前查询快照作为证据，修复本身可重复执行 |
+| 边界 | 只修复统计值，不改写业务状态与历史时间；不因人数归零重新开放招聘；无法还原的历史处理结果按 4.3 标注证据边界 |
+| 验证 | 修复前后对比 SQL 归档到个人记录；回归断言新删除路径自动归零且重复执行无副作用 |
