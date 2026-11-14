@@ -6,7 +6,7 @@ from django.test import SimpleTestCase, override_settings
 from apps.core.errors import ValidationFailed
 from apps.recruitments import rules
 from apps.recruitments.policies import (
-    can_close, can_delete, can_edit, can_view_applications, publish_state_for_viewer,
+    can_close, can_delete, can_edit, can_govern_delete, can_view_applications, publish_state_for_viewer,
 )
 
 
@@ -26,11 +26,11 @@ class RulesTest(SimpleTestCase):
             with self.subTest(deadline=deadline), self.assertRaises(ValidationFailed):
                 rules.validate_deadline(deadline, self.now)
 
-    @override_settings(MAX_HEADCOUNT_LIMIT=50)
+    @override_settings(MAX_HEADCOUNT_LIMIT=200)
     def test_headcount(self):
-        for minimum, maximum in ((None, 1), (1, 50), (50, 50)):
+        for minimum, maximum in ((None, 1), (1, 200), (200, 200)):
             rules.validate_headcount(minimum, maximum)
-        for minimum, maximum in ((None, 0), (None, 51), (0, 3), (4, 3), (True, 3), (None, 1.5)):
+        for minimum, maximum in ((None, 0), (None, 201), (0, 3), (4, 3), (True, 3), (None, 1.5)):
             with self.subTest(minimum=minimum, maximum=maximum), self.assertRaises(ValidationFailed):
                 rules.validate_headcount(minimum, maximum)
 
@@ -114,7 +114,8 @@ class RulesTest(SimpleTestCase):
         self.assertTrue(publish_state_for_viewer(admin, self.r, self.now).can_apply)
         self.r.status = "full"
         self.assertFalse(can_delete(publisher, self.r, self.now))
-        self.assertTrue(can_delete(admin, self.r, self.now))
+        self.assertFalse(can_delete(admin, self.r, self.now))
+        self.assertTrue(can_govern_delete(admin, self.r))
         self.assertEqual(publish_state_for_viewer(admin, self.r, self.now).apply_blocked_reason, "not_open")
         self.r.deleted_at = self.now
         self.assertFalse(can_delete(admin, self.r, self.now))

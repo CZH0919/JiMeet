@@ -84,7 +84,7 @@ class StateTest(TxTestCase):
         self.assertEqual(self.r.closed_at, self.now)
         self.assertEqual(self.app.decided_at, self.now + timedelta(days=7))
 
-    def test_deleted_and_full_are_unchanged(self):
+    def test_deleted_is_unchanged_and_full_rejects_pending_once(self):
         self.r.deleted_at = self.now
         self.r.save(update_fields=["deleted_at"])
         self.assertFalse(sync_recruitment(self.r.pk).closed)
@@ -92,6 +92,7 @@ class StateTest(TxTestCase):
         self.r.status = "full"
         self.r.full_at = self.now
         self.r.save(update_fields=["deleted_at", "status", "full_at"])
+        self.assertEqual(sync_recruitment(self.r.pk).auto_rejected, 1)
         self.assertEqual(sync_recruitment(self.r.pk).auto_rejected, 0)
 
     def test_mark_full_preserves_or_adds_close_time(self):

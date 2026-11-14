@@ -41,6 +41,7 @@ class Command(BaseCommand):
         ).filter(
             Q(status=RecruitmentStatus.OPEN, deadline__lte=now)
             | Q(status=RecruitmentStatus.CLOSED, closed_at__lte=now - timedelta(days=7), has_processing=True)
+            | Q(status=RecruitmentStatus.FULL, has_processing=True)
         ).order_by("pk").values_list("pk", flat=True)
         processed = failed = closed = rejected = 0
         for recruitment_id in candidates.iterator(chunk_size=200):

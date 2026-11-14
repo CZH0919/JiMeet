@@ -156,3 +156,53 @@ class Application(models.Model):
     def __str__(self) -> str:
         """返回仅含数据库主键的申请标识，避免输出申请内容。"""
         return f"Application({self.pk})"
+
+
+class ApplicationHistoryReason(models.TextChoices):
+    ACCEPT = "accept", "接受"
+    REJECT_MANUAL = "reject_manual", "主动拒绝"
+    WITHDRAW = "withdraw", "撤回"
+    AUTO_FULL = "auto_full", "满员自动拒绝"
+    AUTO_WINDOW = "auto_window", "处理期限届满"
+    DELETE_INVALID = "delete_invalid", "招聘删除失效"
+
+
+class ApplicationStatusHistory(models.Model):
+    """仅追加的申请状态变更记录；旧记录不回填推测事件。
+
+    occurred_at 为业务生效时间，created_at 为实际记录时间；补执行事件可不同。
+    actor 为空表示系统自动处理，不保存说明、简历或认证信息。
+    """
+
+    application = models.ForeignKey(Application, on_delete=models.PROTECT, related_name="status_history")
+    recruitment = models.ForeignKey("recruitments.Recruitment", on_delete=models.PROTECT, related_name="application_history")
+    from_status = models.CharField("原状态", max_length=16, choices=ApplicationStatus.choices)
+    to_status = models.CharField("目标状态", max_length=16, choices=ApplicationStatus.choices)
+    reason = models.CharField("变更原因", max_length=32, choices=ApplicationHistoryReason.choices)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="application_actions")
+    occurred_at = models.DateTimeField("业务生效时间")
+    created_at = models.DateTimeField("记录时间", db_default=Now())
+
+    class Meta:
+        db_table = "application_status_history"
+        ordering = ["occurred_at", "id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    Q(from_status="processing", to_status="accepted", reason="accept")
+                    | Q(from_status="processing", to_status="rejected", reason__in=["reject_manual", "auto_full", "auto_window"])
+                    | Q(from_status="processing", to_status="withdrawn", reason="withdraw")
+                    | Q(from_status__in=["processing", "accepted"], to_status="invalid", reason="delete_invalid")
+                ),
+                name="app_history_transition_chk",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(reason__in=["auto_full", "auto_window"], actor__isnull=True)
+                    | (Q(reason__in=["accept", "reject_manual", "withdraw", "delete_invalid"]) & Q(actor__isnull=False))
+                ),
+                name="app_history_actor_chk",
+            ),
+            models.UniqueConstraint(fields=["application", "from_status", "to_status"], name="app_history_transition_uniq"),
+        ]
+        indexes = [models.Index(fields=["application", "occurred_at"], name="app_history_time_idx")]

@@ -3,6 +3,7 @@ import logging
 from dataclasses import dataclass
 from typing import Literal
 
+from apps.core import clock
 from apps.core.choices import ApplicationStatus
 from apps.core.errors import Conflict, ErrorCode, Forbidden, NotAuthenticated
 from apps.recruitments import rules
@@ -47,9 +48,9 @@ def _is_user(user, user_id) -> bool:
 
 
 def resolve_application_access(user, app, recruitment, now) -> ApplicationAccess:
-    """按关系、申请状态和留存期限计算字段读取权限。
+    """按业务关系、申请状态及招聘删除标记计算字段读取权限。
 
-    管理员无额外读取权限；withdrawn/invalid 禁止双方下载简历，并对发布者隐藏说明及私有标记。
+    本人可下载保留的简历；撤回、失效或招聘删除后发布者禁读，并隐藏说明与私有标记。管理员无额外权限。
 
     Args:
         user: 当前操作者。
@@ -65,15 +66,15 @@ def resolve_application_access(user, app, recruitment, now) -> ApplicationAccess
     if publisher and applicant:
         logger.error("申请人与发布者相同", extra={"application_id": app.pk})
     relation = "publisher" if publisher else "applicant" if applicant else "none"
-    if relation == "none" or rules.is_retention_expired(recruitment, now):
+    if relation == "none":
         return ApplicationAccess(relation, False, False, False, False, False)
-    restricted = app.status in {ApplicationStatus.WITHDRAWN, ApplicationStatus.INVALID}
+    restricted = recruitment.deleted_at is not None or app.status in {ApplicationStatus.WITHDRAWN, ApplicationStatus.INVALID}
     return ApplicationAccess(
         relation=relation,
         can_view=True,
         can_see_note=not publisher or not restricted,
         can_see_applicant_name=publisher,
-        can_download_resume=not restricted,
+        can_download_resume=applicant or (publisher and not restricted),
         can_see_publisher_mark=publisher and not restricted,
     )
 
@@ -121,40 +122,42 @@ def can_submit_application(user, recruitment, now, *, has_active_application: bo
         raise Conflict(ErrorCode.DUPLICATE_APPLICATION, "已存在未撤回的申请")
 
 
-def can_modify_application(user, app, recruitment) -> bool:
+def can_modify_application(user, app, recruitment, now=None) -> bool:
     """判断申请人能否修改当前申请。
 
-    对象可见性及留存判断由调用方先行完成。
+    对象可见性由调用方先行校验；修改和撤回均受处理时间窗口限制。
 
     Args:
         user: 当前用户。
         app: 已补执行或完成时间投影的申请。
         recruitment: 对应招募。
+        now: 可选业务时间，默认读取当前业务时钟。
 
     Returns:
-        bool: 申请人身份匹配、申请为 processing 且招募未删除时为 True。
+        bool: 申请人身份匹配、申请为 processing 且处理窗口有效时为 True。
     """
     return (
         _is_user(user, app.applicant_id)
         and app.status == ApplicationStatus.PROCESSING
-        and recruitment.deleted_at is None
+        and rules.is_processable(recruitment, now if now is not None else clock.now())
     )
 
 
-def can_withdraw_application(user, app, recruitment) -> bool:
+def can_withdraw_application(user, app, recruitment, now=None) -> bool:
     """判断申请人能否撤回当前申请。
 
-    对象可见性及留存判断由调用方先行完成。
+    对象可见性由调用方先行校验；修改和撤回均受处理时间窗口限制。
 
     Args:
         user: 当前用户。
         app: 已补执行或完成时间投影的申请。
         recruitment: 对应招募。
+        now: 可选业务时间，默认读取当前业务时钟。
 
     Returns:
-        bool: 申请人身份匹配、申请为 processing 且招募未删除时为 True。
+        bool: 申请人身份匹配、申请为 processing 且处理窗口有效时为 True。
     """
-    return can_modify_application(user, app, recruitment)
+    return can_modify_application(user, app, recruitment, now)
 
 
 def can_process_application(user, app, recruitment, now) -> bool:

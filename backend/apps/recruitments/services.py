@@ -2,7 +2,9 @@
 
 from django.db import transaction
 
-from apps.applications.models import Application
+from apps.accounts.models import User
+from apps.applications.history import record_status_changes
+from apps.applications.models import Application, ApplicationHistoryReason
 from apps.audit import actions
 from apps.audit.service import record
 from apps.core import clock, tx
@@ -36,15 +38,18 @@ def _authorize(user, recruitment, *, allow_admin=False):
     Args:
         user: 已认证操作者。
         recruitment: 待操作招募。
-        allow_admin: 是否允许管理员，默认 False。
+        allow_admin: True 表示治理入口并要求当前管理员；False 表示本人入口。
 
     Raises:
         NotFound: 招募已删除。
-        Forbidden: 不是发布者，也不满足允许的管理员条件。
+        Forbidden: 不满足所选入口的当前身份条件。
     """
     if recruitment.deleted_at is not None:
         raise NotFound("招募不存在")
-    if user.pk != recruitment.publisher_id and not (allow_admin and user.is_admin):
+    if allow_admin:
+        if not User.objects.filter(pk=user.pk, is_admin=True, is_active=True).exists():
+            raise Forbidden("需要管理员权限", audit_target=("recruitment", recruitment.pk))
+    elif user.pk != recruitment.publisher_id:
         raise Forbidden(audit_target=("recruitment", recruitment.pk))
 
 
@@ -56,7 +61,7 @@ def _preflight(user, recruitment_id, *, allow_admin=False):
     Args:
         user: 当前操作者。
         recruitment_id: 招募主键。
-        allow_admin: 是否放行管理员，默认 False。
+        allow_admin: True 使用治理权限，False 仅允许发布者。
 
     Raises:
         BizError: 未认证、招募不存在或已删除，或对象权限不足。
@@ -247,35 +252,27 @@ def close_recruitment(user, recruitment_id: int):
     return state.run_in_recruitment_tx(recruitment_id, close)
 
 
-def delete_recruitment(user, recruitment_id: int, *, reason: str | None = None):
-    """软删除招募，并原子提交有效申请失效、通知和审计。
-
-    processing/accepted 转为 invalid；已接受申请的首次决定时间和历史接受人数保持不变。
-
-    Args:
-        user: 发布者或业务管理员；发布者受编辑窗口限制。
-        recruitment_id: 招募主键。
-        reason: 删除原因，默认 None；管理员必须提供非空原因。
-
-    Returns:
-        None: 保留招募及申请历史，不物理删除简历。
-
-    Raises:
-        BizError: 未认证、对象不可见、权限或操作窗口不足，或管理员未填写原因。
-        RuntimeError: 调用方已在事务内。
-    """
-    _preflight(user, recruitment_id, allow_admin=True)
-    if user.is_admin and not (reason and reason.strip()):
-        raise ValidationFailed(details={"reason": "管理员删除必须填写原因"})
+def _delete_recruitment(user, recruitment_id: int, *, reason: str | None, governance: bool):
+    """按明确的操作入口删除招聘，原子保存失效事件、人数、通知与审计。"""
+    _preflight(user, recruitment_id, allow_admin=governance)
+    if reason is not None and (not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 500):
+        raise ValidationFailed(details={"reason": "删除原因须为 1 至 500 字"})
+    reason = reason.strip() if reason is not None else None
+    if governance and not reason:
+        raise ValidationFailed(details={"reason": "治理删除必须填写原因"})
 
     def delete(locked, now):
-        _authorize(user, locked, allow_admin=True)
-        if not policies.can_delete(user, locked, now):
+        _authorize(user, locked, allow_admin=governance)
+        if not governance and not policies.can_delete(user, locked, now):
             raise Conflict(ErrorCode.RECRUITMENT_NOT_EDITABLE)
         applications = _active_applications(locked)
+        record_status_changes(
+            locked, applications, to_status=ApplicationStatus.INVALID,
+            reason=ApplicationHistoryReason.DELETE_INVALID, occurred_at=now, actor=user,
+        )
         locked.deleted_at = now
-        locked.save(update_fields=["deleted_at", "updated_at"])
-        # 已接受申请保留首次决定时间，历史接受人数也不递减。
+        locked.accepted_count = 0
+        locked.save(update_fields=["deleted_at", "accepted_count", "updated_at"])
         Application.objects.filter(
             pk__in=[app.pk for app in applications if app.status == ApplicationStatus.PROCESSING],
         ).update(
@@ -289,11 +286,50 @@ def delete_recruitment(user, recruitment_id: int, *, reason: str | None = None):
             publisher_mark=PublisherMark.NONE, has_unseen_update=False, updated_at=now,
         )
         _notify_applicants(locked, applications, types.RECRUITMENT_DELETED)
-        if user.is_admin:
-            notify(recipient=locked.publisher, type=types.ADMIN_REMOVED, recruitment=locked)
+        if governance:
+            notify(
+                recipient=locked.publisher, type=types.ADMIN_REMOVED, recruitment=locked,
+                context={"reason_label": reason},
+            )
         record(
-            actor=user, action=actions.ADMIN_DELETE if user.is_admin else actions.RECRUITMENT_DELETE,
+            actor=user, action=actions.ADMIN_DELETE if governance else actions.RECRUITMENT_DELETE,
             target_type="recruitment", target_id=locked.pk, reason=reason,
         )
 
     state.run_in_recruitment_tx(recruitment_id, delete)
+
+
+def delete_recruitment(user, recruitment_id: int, *, reason: str | None = None):
+    """发布者在开放窗口内删除本人招聘，管理员标记不改变限制。
+
+    Args:
+        user: 已认证招聘发布者。
+        recruitment_id: 目标招聘主键。
+        reason: 可选的非空原因，最多 500 字。
+
+    Returns:
+        None: 有效申请失效、接受人数归零，保留业务状态及时间，不删除简历。
+
+    Raises:
+        BizError: 对象不可见、非发布者、删除窗口关闭或原因无效。
+        RuntimeError: 调用方已处于事务中。
+    """
+    _delete_recruitment(user, recruitment_id, reason=reason, governance=False)
+
+
+def governance_delete_recruitment(user, recruitment_id: int, *, reason: str):
+    """管理员治理删除任意未删除状态的招聘，并向发布者发送处置原因。
+
+    Args:
+        user: 当前有效的业务管理员，权限在锁内重新读取。
+        recruitment_id: 目标招聘主键。
+        reason: 必填非空原因，最多 500 字。
+
+    Returns:
+        None: 删除、状态历史、人数及通知与审计同事务提交。
+
+    Raises:
+        BizError: 对象不存在或已删除、管理员权限不足或原因不合法。
+        RuntimeError: 调用方已处于事务中。
+    """
+    _delete_recruitment(user, recruitment_id, reason=reason, governance=True)

@@ -5,12 +5,14 @@
 
 from apps.core import clock
 from apps.core.pagination import paginate
+from apps.core.permissions import IsAdminFlag
 from apps.core.responses import created, ok, page
 from apps.core.serializers import EmptyBodySerializer
 from apps.core.views import PrivateAPIView, validate_data
 from apps.recruitments import selectors, services
 from apps.recruitments.serializers import (
     RecruitmentDeleteSerializer,
+    RecruitmentGovernanceSerializer,
     RecruitmentDetailSerializer,
     RecruitmentQuerySerializer,
     RecruitmentSummarySerializer,
@@ -161,7 +163,7 @@ class RecruitmentDetailView(PrivateAPIView):
         """DELETE /api/v1/recruitments/{id}：软删除招募。
 
         Args:
-            request: JSON 可含 reason；管理员必填，发布者可省略。删除不物理清理申请或简历。
+            request: JSON 可含 reason；仅本人删除，管理员标记不绕过发布者及状态限制。删除不物理清理申请或简历。
             recruitment_id: 路径中的招募主键。
 
         Returns:
@@ -169,7 +171,7 @@ class RecruitmentDetailView(PrivateAPIView):
 
         Raises:
             ValidationError: 删除字段不合法，返回 400。
-            BizError: 管理员缺原因 400、越权 403、对象不可见/已删除 404，或发布者窗口不允许 409。
+            BizError: 越权 403、对象不可见/已删除 404，或发布者窗口不允许 409。
         """
         data = validate_data(RecruitmentDeleteSerializer, request.data)
         services.delete_recruitment(request.user, recruitment_id, **data)
@@ -194,3 +196,25 @@ class RecruitmentCloseView(PrivateAPIView):
         validate_data(EmptyBodySerializer, request.data)
         recruitment = services.close_recruitment(request.user, recruitment_id)
         return ok(_detail(recruitment, request.user, clock.now()))
+
+
+class RecruitmentGovernanceView(PrivateAPIView):
+    """治理删除招聘的独立管理员入口。"""
+
+    def delete(self, request, recruitment_id):
+        """DELETE /api/v1/admin/recruitments/{id}：按治理权限删除招聘。
+
+        Args:
+            request: 已认证管理员请求，JSON 必须提供 1～500 字的 reason。
+            recruitment_id: 目标招聘主键。
+
+        Returns:
+            Response: HTTP 200、data=None，通知发布者及本次失效申请人。
+
+        Raises:
+            BizError: 无权限 403、对象不存在/已删除 404、原因无效 400。
+        """
+        IsAdminFlag().has_permission(request, None)
+        data = validate_data(RecruitmentGovernanceSerializer, request.data)
+        services.governance_delete_recruitment(request.user, recruitment_id, **data)
+        return ok()

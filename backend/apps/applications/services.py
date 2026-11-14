@@ -1,6 +1,7 @@
 """申请提交、修改及状态变更。"""
 
-from apps.applications.models import Application
+from apps.applications.history import record_status_changes
+from apps.applications.models import Application, ApplicationHistoryReason
 from apps.applications.policies import can_submit_application, require_submit_identity
 from apps.applications.selectors import get_application, require_application_access
 from apps.audit import actions
@@ -164,6 +165,8 @@ def _save_application_update(
             raise Conflict(ErrorCode.APPLICATION_NOT_PROCESSING, "申请已不是处理中，不能修改")
         if recruitment.deleted_at is not None:
             raise Conflict(ErrorCode.APPLICATION_NOT_PROCESSING, "申请已失效，不能修改")
+        if not rules.is_processable(recruitment, now):
+            raise Conflict(ErrorCode.PROCESSING_WINDOW_CLOSED, "申请修改窗口已关闭")
 
         update_fields = ["has_unseen_update", "updated_at"]
         application.has_unseen_update = True
@@ -221,6 +224,12 @@ def perform_application_action(user, application_id: int, action: str, *, seen_u
                 raise Conflict(ErrorCode.APPLICATION_NOT_PROCESSING, "申请已不是处理中，不能撤回")
             if recruitment.deleted_at is not None:
                 raise Conflict(ErrorCode.APPLICATION_NOT_PROCESSING, "申请已失效，不能撤回")
+            if not rules.is_processable(recruitment, now):
+                raise Conflict(ErrorCode.PROCESSING_WINDOW_CLOSED, "申请撤回窗口已关闭")
+            record_status_changes(
+                recruitment, [application], to_status=ApplicationStatus.WITHDRAWN,
+                reason=ApplicationHistoryReason.WITHDRAW, occurred_at=now, actor=user,
+            )
             application.status = ApplicationStatus.WITHDRAWN
             application.publisher_mark = PublisherMark.NONE
             application.has_unseen_update = False
@@ -238,7 +247,7 @@ def perform_application_action(user, application_id: int, action: str, *, seen_u
         if action == "read":
             if recruitment.publisher_id != user.pk:
                 raise Forbidden("只有发布者可以确认申请修改")
-            if application.status in {ApplicationStatus.WITHDRAWN, ApplicationStatus.INVALID}:
+            if recruitment.deleted_at is not None or application.status in {ApplicationStatus.WITHDRAWN, ApplicationStatus.INVALID}:
                 raise Conflict(ErrorCode.APPLICATION_NOT_PROCESSING, "该申请不能确认修改")
             if application.has_unseen_update and application.updated_at == seen_updated_at:
                 application.has_unseen_update = False
@@ -273,6 +282,10 @@ def perform_application_action(user, application_id: int, action: str, *, seen_u
         application.has_unseen_update = False
         application.decided_at = now
         if action == "accept":
+            record_status_changes(
+                recruitment, [application], to_status=ApplicationStatus.ACCEPTED,
+                reason=ApplicationHistoryReason.ACCEPT, occurred_at=now, actor=user,
+            )
             application.status = ApplicationStatus.ACCEPTED
             application.save(update_fields=[
                 "status", "publisher_mark", "has_unseen_update", "decided_at", "updated_at",
@@ -289,6 +302,10 @@ def perform_application_action(user, application_id: int, action: str, *, seen_u
             _record_application_update(user, application)
             return application
 
+        record_status_changes(
+            recruitment, [application], to_status=ApplicationStatus.REJECTED,
+            reason=ApplicationHistoryReason.REJECT_MANUAL, occurred_at=now, actor=user,
+        )
         application.status = ApplicationStatus.REJECTED
         application.save(update_fields=[
             "status", "publisher_mark", "has_unseen_update", "decided_at", "updated_at",

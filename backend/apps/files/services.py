@@ -41,8 +41,8 @@ def download_resume(user, application_id: int) -> ResumeDownload:
         ResumeDownload: 成功后由调用方或 FileResponse 关闭 stream，传输在事务外进行。
 
     Raises:
-        NotFound: 申请不可见、过留存期，或文件缺失/路径不可用。
-        Forbidden: withdrawn/invalid 状态禁止下载。
+        NotFound: 申请不可见，或文件缺失/路径不可用。
+        Forbidden: 申请已撤回、失效或招聘已删除，发布者无下载权限。
         RuntimeError: 调用方处于事务中。
         OSError: 其他未转换的文件系统读取错误。
     """

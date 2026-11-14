@@ -129,7 +129,7 @@ class SettingsTest(SimpleTestCase):
         self.assertEqual(settings.AUTH_USER_MODEL, "accounts.User")
         self.assertEqual(settings.TIME_ZONE, "Asia/Shanghai")
         self.assertTrue(settings.USE_TZ)
-        self.assertEqual(settings.MAX_HEADCOUNT_LIMIT, 50)
+        self.assertEqual(settings.MAX_HEADCOUNT_LIMIT, 200)
         self.assertEqual(
             settings.MIDDLEWARE[0],
             "apps.core.middleware.RequestIdMiddleware",

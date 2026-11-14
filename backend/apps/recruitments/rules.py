@@ -73,14 +73,14 @@ def retention_starts_at(r) -> datetime | None:
         r: 招募对象；调用方应先补执行或投影到期状态。
 
     Returns:
-        datetime | None: 180 天留存起点；未产生相关状态时为 None。
+        datetime | None: 旧通知过滤的时间起点；未产生相关状态时为 None。
     """
     dates = [dt for dt in (r.closed_at, r.full_at, r.deleted_at) if dt is not None]
     return min(dates) if dates else None
 
 
 def retention_expires_at(r) -> datetime | None:
-    """计算申请明细的 180 天留存终点。
+    """计算旧通知路径的兼容时间阈值。
 
     Args:
         r: 招募对象；调用方应先补执行或投影到期状态。
@@ -93,7 +93,7 @@ def retention_expires_at(r) -> datetime | None:
 
 
 def is_retention_expired(r, now: datetime) -> bool:
-    """判断申请明细是否到达留存终点。
+    """判断旧通知路径是否到达兼容时间阈值。
 
     Args:
         r: 招募对象。
