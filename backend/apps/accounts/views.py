@@ -2,16 +2,20 @@
 
 需认证的入口先检查会话和 CSRF，分别拒绝为 401 和 403；非法查询或请求数据通常返回 400，不支持的媒体类型返回 415。异常由统一处理器转换为错误信封；简历下载成功直接返回文件流。
 """
+from collections.abc import Mapping
+
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework.authentication import SessionAuthentication
+from rest_framework.exceptions import ParseError, ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts import ratelimit
 from apps.accounts.serializers import (
     DevLoginSerializer,
     LoginSerializer,
@@ -42,6 +46,39 @@ def _client_ip(request) -> str:
         str: REMOTE_ADDR；缺失时为空字符串（对应键不计数）。
     """
     return (request._request.META.get("REMOTE_ADDR") or "").strip()
+
+
+def _validate_auth_payload(request, serializer_class, *, kind: str) -> dict:
+    """校验认证输入，并将字段或 JSON 格式错误计入一次失败。
+
+    CSRF 由调用方先行校验；服务层负责业务校验失败计数，避免重复累计。
+
+    Args:
+        request: 已通过 CSRF 的 DRF 请求。
+        serializer_class: 注册或登录请求序列化器。
+        kind: login 或 register。
+
+    Returns:
+        dict: 可传入认证服务的校验结果。
+
+    Raises:
+        BizError: 请求已受失败限流限制，返回 429。
+        ParseError: 请求 JSON 无法解析，返回 400，仅按 IP 计数。
+        ValidationError: 字段校验失败，返回 400，按有效邮箱键及 IP 计数。
+    """
+    ip = _client_ip(request)
+    ratelimit.check_limit(scope="ip", value=ip, kind=kind)
+    email = ""
+    try:
+        data = request.data
+        email = ratelimit.normalize_email_key(data.get("email") if isinstance(data, Mapping) else None)
+        ratelimit.check_limit(scope="email", value=email, kind=kind)
+        serializer = serializer_class(data=data)
+        serializer.is_valid(raise_exception=True)
+    except (ParseError, ValidationError):
+        ratelimit.record_auth_failure(email=email, ip=ip, kind=kind)
+        raise
+    return serializer.validated_data
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")
@@ -86,10 +123,9 @@ class RegisterView(APIView):
             ValidationFailed: 邮箱冲突或密码不合规，返回 400。
             BizError: 失败限流，返回 429 RATE_LIMITED。
         """
-        SessionAuthentication().enforce_csrf(request)
-        serializer = RegisterSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = register_with_password(ip=_client_ip(request), **serializer.validated_data)
+        SessionAuthentication().enforce_csrf(request._request)
+        data = _validate_auth_payload(request, RegisterSerializer, kind=ratelimit.KIND_REGISTER)
+        user = register_with_password(ip=_client_ip(request), **data)
         login(request._request, user, backend=PASSWORD_BACKEND)
         response = created(profile_data(user))
         response["Cache-Control"] = "private, no-store"
@@ -121,10 +157,9 @@ class LoginView(APIView):
             BizError: 凭据不合法 401 AUTH_FAILED；失败限流 429 RATE_LIMITED。
             Forbidden: 账号已停用，返回 403。
         """
-        SessionAuthentication().enforce_csrf(request)
-        serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = login_with_password(ip=_client_ip(request), **serializer.validated_data)
+        SessionAuthentication().enforce_csrf(request._request)
+        data = _validate_auth_payload(request, LoginSerializer, kind=ratelimit.KIND_LOGIN)
+        user = login_with_password(ip=_client_ip(request), **data)
         login(request._request, user)
         response = ok(profile_data(user))
         response["Cache-Control"] = "private, no-store"
@@ -198,7 +233,7 @@ class MeView(PrivateAPIView):
         return ok(profile_data(request.user))
 
     def patch(self, request):
-        """PATCH /api/v1/me：修改本人昵称或邮件通知偏好。
+        """PATCH /api/v1/me：修改本人昵称或邮件偏好兼容字段，不触发发信。
 
         Args:
             request: JSON 可含 nickname、email_notify_enabled，不接受 URL 查询参数；空对象表示不修改。

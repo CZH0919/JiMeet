@@ -1,5 +1,6 @@
 """受控撤销业务管理员权限的管理命令。"""
 from django.core.management.base import BaseCommand, CommandError
+from django.db import transaction
 
 from apps.accounts.models import User
 from apps.audit import actions
@@ -27,7 +28,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        """执行撤销；本就不具备权限时不做重复变更。
+        """锁定目标账号，同事务撤销权限并写审计；已撤权时不重复变更。
 
         Args:
             args: Django 位置参数。
@@ -36,24 +37,25 @@ class Command(BaseCommand):
         Raises:
             CommandError: 目标账号或操作者账号不存在。
         """
-        user = User.objects.filter(email__iexact=options["email"].strip()).first()
-        if user is None:
-            raise CommandError(f"账号不存在: {options['email']}")
-        actor = None
-        if options["actor_email"]:
-            actor = User.objects.filter(email__iexact=options["actor_email"].strip()).first()
-            if actor is None:
-                raise CommandError(f"操作者账号不存在: {options['actor_email']}")
-        if not user.is_admin:
-            self.stdout.write(f"账号本就不具备管理员权限，无变更: {user.email}")
-            return
-        user.is_admin = False
-        user.save(update_fields=["is_admin", "updated_at"])
-        record(
-            actor=actor,
-            action=actions.ADMIN_REVOKE,
-            target_type="user",
-            target_id=user.pk,
-            reason=f"管理命令撤销管理员权限（目标 {user.email}）",
-        )
+        with transaction.atomic():
+            user = User.objects.select_for_update().filter(email__iexact=options["email"].strip()).first()
+            if user is None:
+                raise CommandError(f"账号不存在: {options['email']}")
+            actor = None
+            if options["actor_email"]:
+                actor = User.objects.filter(email__iexact=options["actor_email"].strip()).first()
+                if actor is None:
+                    raise CommandError(f"操作者账号不存在: {options['actor_email']}")
+            if not user.is_admin:
+                self.stdout.write(f"账号本就不具备管理员权限，无变更: {user.email}")
+                return
+            user.is_admin = False
+            user.save(update_fields=["is_admin", "updated_at"])
+            record(
+                actor=actor,
+                action=actions.ADMIN_REVOKE,
+                target_type="user",
+                target_id=user.pk,
+                reason=f"管理命令撤销管理员权限（目标 {user.email}）",
+            )
         self.stdout.write(self.style.SUCCESS(f"已撤销管理员权限: {user.email}"))

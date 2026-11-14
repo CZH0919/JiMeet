@@ -306,6 +306,7 @@ class AdminCommandTest(TxTestCase):
         })
         self.assertEqual(response.status_code, 200)
 
+        invalid = make_user(email="invalid-password@tongji.edu.cn")
         with mock.patch("sys.stdin", io.StringIO("12345678\n")):
             with self.assertRaisesMessage(CommandError, "密码不合规"):
-                call_command("init_password", "--email", unusable.email, stdout=io.StringIO())
+                call_command("init_password", "--email", invalid.email, stdout=io.StringIO())

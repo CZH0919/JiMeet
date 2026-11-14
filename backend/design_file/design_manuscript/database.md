@@ -50,17 +50,19 @@ To AI:
 > 
 >
 
+> v0.7（2026-11-14）：同步账号密码策略、受控命令事务、输入失败计数及邮件兼容说明；不改变表结构。
+
 ## 0 通用约定
 1. 数据库：PostgreSQL；ORM：Django。表字段中的类型以 PostgreSQL 为准，括号内为 Django 对应写法。
 2. 时间字段一律使用 `TIMESTAMPTZ`（`DateTimeField`，`USE_TZ = True`），不使用无时区的 DATETIME。
 3. 枚举类字段（role、type、status 等）使用 `VARCHAR` + `CHECK` 约束（Django 中用 `TextChoices` + `CheckConstraint`），不使用 PostgreSQL 的 ENUM 类型，后续新增取值时迁移更简单。例外：`Notification.type`（1.5）和 `AuditLog.action`（1.8）取值会随功能频繁新增，有意不加 CHECK，由应用层常量约束。
 4. 外键默认 `ON DELETE PROTECT`，业务上的“删除”一律为软删除或状态变更，避免误删申请记录（申请记录需保留 180 天）；留存期满后的后台清理是例外，按 1.4 显式清理依赖记录后物理删除明细。
-5. 招聘的修改、关闭、删除，以及申请的提交、修改、撤回、处理和自动处理，统一在事务中先用 `select_for_update()` 锁住对应的 Recruitment 行，再重新读取申请并校验当前状态、权限、删除标记和时间窗口；不得使用加锁前读取的状态作决定。需要锁申请行时，一律先锁招聘、再锁申请，防止并发重复接受、接受与撤回冲突及超员。状态变更、人数更新、站内通知与邮件待发送记录在同一事务内保存，邮件在事务提交后发送。
+5. 招聘的修改、关闭、删除，以及申请的提交、修改、撤回、处理和自动处理，统一在事务中先用 `select_for_update()` 锁住对应的 Recruitment 行，再重新读取申请并校验当前状态、权限、删除标记和时间窗口；不得使用加锁前读取的状态作决定。需要锁申请行时，一律先锁招聘、再锁申请，防止并发重复接受、接受与撤回冲突及超员。状态变更、人数更新、站内通知与审计在同一事务内保存；当前不创建业务邮件任务或发信回调。
 6. 需要由定时任务驱动的逻辑（Celery beat，或 management command + cron）：
    - 到截止时间，招聘自动置为已关闭；
    - 招聘关闭满 7 天，仍处理中的申请自动拒绝并通知；
    - 招聘结束满 180 天后，按 1.2 的起算规则执行 1.4 的申请统计与明细清理；
-   - 邮件发送失败重试；
+   - 邮件发送与重试保留为预留能力，当前不调度；
    - 清理上传或替换失败遗留的孤立文件，重试未完成的申请明细清理。
 7. 定时任务不作为权限和时间校验的唯一保障。相关接口使用当前时间判断是否到期；必要时先补执行到期关闭或七天到期自动拒绝，再判断请求。补执行的状态、通知必须提交，即使原请求已不符合操作条件，也不能因业务拒绝而将补执行回滚。实现方式固定为两个独立事务：
    - 事务一：`sync_recruitment(recruitment_id)`，锁招聘行，按当前时间补执行到期关闭、七天自动拒绝、满员拒绝，通知与邮件待发送记录一并写入，然后提交；
@@ -80,14 +82,14 @@ Django 实现：继承 `AbstractBaseUser` + `PermissionsMixin`，`USERNAME_FIELD
 | uid | VARCHAR(32) | NOT NULL, UNIQUE | 对外使用的的uid，随机生成（`uuid4().hex`，恰好 32 位），防止被遍历爬取|
 | real_id | VARCHAR(32) | NOT NULL, UNIQUE | 真实的学号/工号，内部使用，不对外公开|
 | nickname | VARCHAR(32)  | NOT NULL | 可以自主定义的用户名 |
-| name | VARCHAR(32)  | NOT NULL | 真实的姓名 |
-| email | VARCHAR(254) | NOT NULL（必须是同济邮箱格式） | 邮箱号，用于登录预留与邮件通知 |
+| name | VARCHAR(32)  | NOT NULL | 用户自填姓名，仅作未核验展示 |
+| email | VARCHAR(254) | NOT NULL（必须是同济邮箱格式） | 邮箱号，用于邮箱密码登录；后缀校验不代表归属已核验 |
 | role | VARCHAR(32)  | NOT NULL，CHECK (role IN ('student','teacher')) | 用户角色，只能是`student` 或 `teacher`，登录时依据学号/工号判定 |
 | is_admin | BOOLEAN | NOT NULL，默认 FALSE | 是否拥有管理员权限 |
 | is_active | BOOLEAN | NOT NULL，默认 TRUE | 是否启用 |
 | password | VARCHAR(128) | NOT NULL DEFAULT '' | Django 哈希格式密码。“邮箱登录”预留；若只走统一身份认证则保持空串 |
 | sso_subject | VARCHAR(191) | UNIQUE，可空 | 统一身份认证返回的稳定用户标识；与密码登录可并存 |
-| email_notify_enabled | BOOLEAN | NOT NULL，默认 TRUE | 是否接收邮件通知（站内通知始终生成） |
+| email_notify_enabled | BOOLEAN | NOT NULL，默认 TRUE | 邮件偏好兼容字段，当前不控制发信 |
 | privacy_consented_at | TIMESTAMPTZ | 可空 | 确认个人信息处理告知的时间；为空时不允许提交申请（首次填写简历前须确认） |
 | last_login | TIMESTAMPTZ | 可空 | Django 内置字段，由 `AbstractBaseUser` 提供 |
 | created_at | TIMESTAMPTZ | NOT NULL | 注册时间、管理员/个人主页排序 |
@@ -289,10 +291,9 @@ CREATE INDEX application_applicant_idx ON application (applicant_id, created_at 
 | updated_at | TIMESTAMPTZ | NOT NULL | |
 
 #### 设计细节
-1. 仅在 `User.email_notify_enabled = TRUE` 时才创建记录。
-2. 邮件正文只包含状态变更类型、关联信息名称、当前状态与站内链接。
-3. `attempts` 表示发送轮次而非累计发送次数。记录创建及首次发送时为 0；失败且 attempts < 3 时，下一次重试发送前加 1；第 3 次重试仍失败时标记 failed。任意一次成功均标记 sent，不再重试。待发送与可重试期间保持 pending，最近错误写 last_error；任务需互斥处理同一条记录，防止并发重复发送。连续失败需要触发告警（运维需求）。
-4. 关联申请到留存期限后停止发送；清理关联通知前显式删除本表记录，以满足默认 PROTECT 外键约束。错误日志不得保存简历内容、认证凭证或完整邮件正文。
+1. 保留表结构和历史数据；当前业务事件不创建本表记录，`email_notify_enabled` 不触发发信。
+2. `attempts`、状态及错误字段用于解释历史数据；邮件派发与重试命令仍为预留，后续启用须另行评审。
+3. 不因本轮调整删除历史邮件日志；如未来清理关联通知，须处理本表的 PROTECT 关系。错误日志不得保存简历内容、认证凭证或完整邮件正文。
 
 ### 1.7 ChatConversation 会话 与 ChatMessage 消息
 聊天不依赖招聘与申请，任意两个用户都可以发起，仅支持纯文本。
@@ -418,6 +419,8 @@ recruitment 1 ──< announcement        （可选，招募链接）
 
 本章为 Sprint2 已确认需求的数据方案、迁移归属与验证方法；均新增独立迁移，不重写历史迁移，不删除旧数据。
 
+4.1、4.2 已实现；4.3、4.4 待阶段 4 实施。旧章节中固定 180 天清理及历史人数保留的描述不作为本轮目标规则；阶段 4～5 按现行需求适配已有行为，本轮不实施物理清理。
+
 ### 4.1 通知的公告关联（zf，阶段 3，`notifications.0002`）
 
 | 变更 | 内容 |
@@ -434,8 +437,10 @@ recruitment 1 ──< announcement        （可选，招募链接）
 | --- | --- |
 | 新表 | `auth_failure`：id BIGINT 自增主键，`key_hash` CHAR(64)（邮箱或 IP 的 SHA-256 摘要，不落明文）、`kind` VARCHAR(16)（login/register）、`created_at` TIMESTAMPTZ |
 | 索引 | `(key_hash, created_at)` |
-| 用途 | 失败限流：600 秒窗口内同邮箱键 5 次、同 IP 键 20 次；采用插入即计数（INSERT），无读改写，保证并发失败不丢计数；登录成功按邮箱键删除计数行，窗口外记录惰性清理 |
-| 验证 | 并发失败计数一致性测试；窗口滑过自动恢复；成功登录清零；键为摘要不可逆推邮箱 |
+| 用途 | 失败限流：600 秒窗口内同邮箱键 5 次、同 IP 键 20 次；采用插入即计数（INSERT），无读改写，保证并发失败不丢计数；注册/登录分别计数，字段校验失败与业务认证失败各计一次，邮箱不可解析时仅计 IP；成功按对应操作的邮箱键删除计数，窗口外记录惰性清理 |
+| 验证 | 并发失败计数一致性测试；窗口滑过自动恢复；成功登录清零；键只保存摘要，不存原始邮箱 |
+
+受控管理员授予/撤销和历史密码初始化复用 `app_user`，锁定目标行后将账号变更与审计同事务提交；失败整体回滚。密码初始化拒绝覆盖已有可用密码，注册与初始化统一校验 8～128 字符及邮箱、姓名相似度；无新增密码重置接口或数据表。
 
 ### 4.3 申请状态变更历史表（czh，阶段 4，`applications.0002`）
 

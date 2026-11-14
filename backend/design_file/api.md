@@ -1,19 +1,19 @@
 # JiMeet 后端接口契约
 
-更新日期：2026-11-14（Sprint2 阶段 1 契约统一）；实现状态随各阶段交付更新
+更新日期：2026-11-14
 
 本文是前后端对接的统一接口正文。下文接口路径统一以 `/api/v1` 为前缀，不带末尾斜杠；文件路径相对项目根目录。
 
 ## 1. 接口概览
 
-当前提供 31 个可用方法/路径及 2 个返回 501 的 SSO 预留接口。开发登录仅在相应配置开关启用时可用。Sprint2 规划新增 9 个方法/路径，下表以“阶段”标注交付批次，未交付前不可调用；全部交付后累计 40 个方法/路径。数量不代替功能验收。
+当前实现 39 个方法/路径（含受开关控制的开发登录），另有 2 个返回 501 的 SSO 预留接口；关闭开发登录时可用路径为 38 个。招聘治理删除接口尚待实现，交付后累计 40 个；既有本人删除接口的语义适配不另计路径。
 
 | 方法 | 路径 | 状态 |
 | --- | --- | --- |
 | GET | `/healthz` | 可用 |
 | GET | `/auth/csrf` | 可用 |
-| POST | `/auth/register` | 可用（阶段 2 交付） |
-| POST | `/auth/login` | 可用（阶段 2 交付） |
+| POST | `/auth/register` | 可用 |
+| POST | `/auth/login` | 可用 |
 | POST | `/auth/dev-login` | 仅开发环境 |
 | POST | `/auth/logout` | 可用 |
 | GET | `/me` | 可用 |
@@ -26,7 +26,7 @@
 | POST | `/recruitments` | 可用 |
 | GET | `/recruitments/{id}` | 可用 |
 | PATCH | `/recruitments/{id}` | 可用 |
-| DELETE | `/recruitments/{id}` | 可用（本人删除语义，阶段 4 适配） |
+| DELETE | `/recruitments/{id}` | 可用；本人/治理分入口待阶段 4 适配 |
 | DELETE | `/admin/recruitments/{id}` | 待实现（阶段 4，治理删除） |
 | POST | `/recruitments/{id}/close` | 可用 |
 | GET | `/me/recruitments` | 可用 |
@@ -46,14 +46,14 @@
 | GET | `/notifications/unread-count` | 可用 |
 | POST | `/notifications/{id}/read` | 可用 |
 | POST | `/notifications/read-all` | 可用 |
-| GET | `/announcements` | 可用（阶段 3 交付） |
-| GET | `/announcements/{id}` | 可用（阶段 3 交付） |
-| POST | `/announcements` | 可用（阶段 3 交付） |
-| PATCH | `/announcements/{id}` | 可用（阶段 3 交付） |
-| DELETE | `/announcements/{id}` | 可用（阶段 3 交付，本人删除） |
-| DELETE | `/admin/announcements/{id}` | 可用（阶段 3 交付，治理删除） |
+| GET | `/announcements` | 可用 |
+| GET | `/announcements/{id}` | 可用 |
+| POST | `/announcements` | 可用 |
+| PATCH | `/announcements/{id}` | 可用 |
+| DELETE | `/announcements/{id}` | 可用（本人删除） |
+| DELETE | `/admin/announcements/{id}` | 可用（治理删除） |
 
-公告接口（第 8 章）HTTP 层已于 Sprint2 阶段 3 交付；注册登录已于阶段 2 交付。标注“待实现”的路径在对应阶段交付前不可调用。当前可用方法/路径 38 个，另有 2 个 SSO 预留与 2 个待实现（阶段 4 的招聘治理删除及其本人删除语义适配），全部交付后累计 40 个。
+标注“待实现”的路径不可调用；阶段 4～5 的目标规则与当前行为在相应章节分别说明。
 
 `/applications/{id}/read` 用于确认申请修改；通知已读使用 `/notifications/{id}/read` 或 `/notifications/read-all`。
 
@@ -65,13 +65,13 @@
 
 `seed_tags` 初始化标签；`run_sync_recruitments` 补执行到期关闭与七天自动拒绝，需要独立调用或调度。邮件发送与留存物理清理命令仍为预留，调用返回 `CommandError: reserved`；Sprint2 起业务事件不再创建邮件待发记录（见第 7 章兼容说明）。
 
-受控账号管理（管理命令，已交付）：`grant_admin` / `revoke_admin` 按邮箱授予或撤销业务管理员（写审计）；`init_password` 从标准输入读取新密码，为无可用密码的历史账号初始化。不提供任何在线授予或“仅凭邮箱重设密码”的公开入口。
+受控账号管理：`grant_admin` / `revoke_admin` 按邮箱授予或撤销业务管理员，锁定目标账号并与审计同事务提交，重复操作不重复记录状态变化。`init_password` 仅初始化无可用密码的账号，拒绝覆盖已有密码，复用注册的 8～128 字符及相似度策略；支持终端无回显输入或标准输入管道，不接收密码参数。三类命令失败均回滚账号变更。不提供在线授予或仅凭邮箱重设密码的入口。
 
 ## 2. 通用契约
 
 ### 2.1 请求、标识与时间
 
-- 默认要求登录；仅健康检查、CSRF 获取、开发登录及 SSO 占位接口公开。学生和教师使用同一业务操作规则，管理员身份不增加申请内容、简历读取权限。
+- 默认要求登录；仅健康检查、CSRF 获取、邮箱注册/登录、开发登录及 SSO 占位接口公开。学生和教师使用同一业务操作规则，管理员身份不增加申请内容、简历读取权限。
 - JSON 请求使用 `Content-Type: application/json`；上传和替换简历使用 `multipart/form-data`。文件下载成功返回文件流。
 - JSON 字段使用 `snake_case`。用户仅暴露 32 位十六进制 `uid`；招募、申请、通知、标签使用正整数 `id`。不输出用户数据库主键、`real_id`、认证标识、私有文件路径或邮箱等无关身份信息。
 - 时间为带时区的 ISO 8601 字符串，例如 `2026-11-15T18:00:00+08:00`，客户端按时间点解析；不能依赖固定时区文本。截止边界以服务端时间为准。
@@ -248,7 +248,7 @@ async function confirmPrivacyConsent() {
 
 200，`data={"csrf_token":"..."}`，同时设置 `csrftoken` Cookie。令牌为不透明字符串，不校验其固定文本长度，不写入业务日志。
 
-### 4.3 POST /auth/register（公开，强制 CSRF；已交付）
+### 4.3 POST /auth/register（公开，强制 CSRF）
 
 注册是面向普通用户的主入口。请求为 JSON：
 
@@ -269,7 +269,7 @@ async function confirmPrivacyConsent() {
 - 失败限流与 CSRF 校验同 4.4 口径；超限 429 `RATE_LIMITED`。
 - 不发送认证邮件或验证码；响应、日志不记录密码、密码摘要或会话凭证。响应带 `Cache-Control: private, no-store`。
 
-### 4.4 POST /auth/login（公开，强制 CSRF；已交付）
+### 4.4 POST /auth/login（公开，强制 CSRF）
 
 请求为 JSON：
 
@@ -283,7 +283,7 @@ async function confirmPrivacyConsent() {
 - 成功 200：建立会话并轮换会话键与 CSRF 令牌，返回本人资料。
 - 不存在邮箱、错误密码、不可用密码：统一 401 `AUTH_FAILED`，提示一致，不泄露账号是否存在。
 - 凭据正确但账号已停用：403 `FORBIDDEN`，不建立会话。
-- **失败限流（阶段 1 固定参数）**：计数键为邮箱 SHA-256 摘要与来源 IP（不落明文邮箱），窗口 600 秒；同一邮箱键累计 5 次或同一 IP 键累计 20 次失败后，返回 429 `RATE_LIMITED`，窗口滑过后自动恢复；登录成功清除该邮箱键计数。计数持久化落库，并发失败不丢计数。
+- **失败限流**：注册与登录分别计数；邮箱与来源 IP 的键均只保存 SHA-256 摘要。窗口为 600 秒，同一邮箱键累计 5 次或同一 IP 键累计 20 次失败后返回 429 `RATE_LIMITED`，窗口滑过后恢复；成功注册或登录清除对应操作的邮箱键计数。字段校验、密码策略、重复注册及认证失败均计数，每次失败对有效邮箱键与 IP 各累计一次；邮箱缺失或不可解析、JSON 格式错误只按 IP 计数。CSRF 或不支持的媒体类型被拒绝时不计入认证失败。计数落库，并发失败不丢计数。
 - 匿名请求同样强制 CSRF 校验；失败不写入会话。
 
 ### 4.5 POST /auth/dev-login（公开，仅开发环境）
@@ -558,7 +558,7 @@ hold/unhold 在仍满足操作条件且标记已是目标值时返回当前记�
 
 ## 7. 通知接口
 
-Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（可空）、`application_id`（可空）、`announcement_id`（可空，阶段 3 起返回）、`is_read`、`created_at`。不返回接收人邮箱、私有文件信息、简历内容或申请人的完整身份；客户端跳转目标仍受目标接口的权限校验。
+Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（可空）、`application_id`（可空）、`announcement_id`（可空）、`is_read`、`created_at`。不返回接收人邮箱、私有文件信息、简历内容或申请人的完整身份；客户端跳转目标仍受目标接口的权限校验。
 
 | 接口 | 输入与行为 | 成功 data |
 | --- | --- | --- |
@@ -569,7 +569,7 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 
 无权读取或修改他人的通知返回 404；`is_read` 空值、数字或其他字符串为 400。列表、未读数及标记操作采用一致的可见范围；通知不因固定留存期限隐藏（9.1 目标口径，阶段 5 移除既有截断），可见性仅由接收人、目标关联权限与删除提示规则决定。标记全部已读不包括该操作完成后才新建的通知。
 
-通知 type 沿用 `backend/apps/notifications/types.py`：`application_submitted`、`application_accepted`、`application_rejected`、`application_withdrawn`、`application_updated`、`recruitment_closed`、`recruitment_updated`、`recruitment_deleted`、`admin_removed`，以及阶段 3 新增的 `announcement_admin_removed`（公告被管理员治理删除，接收人为公告作者，含公告名称、处置结果、原因与 `announcement_id` 引用）。读取申请列表或通知列表不会自动标记通知已读。
+通知 type 沿用 `backend/apps/notifications/types.py`：`application_submitted`、`application_accepted`、`application_rejected`、`application_withdrawn`、`application_updated`、`recruitment_closed`、`recruitment_updated`、`recruitment_deleted`、`admin_removed`，以及 `announcement_admin_removed`（公告被管理员治理删除，接收人为公告作者，含公告名称、处置结果、原因与 `announcement_id` 引用）。读取申请列表或通知列表不会自动标记通知已读。
 
 目标关联规则（阶段 3 起在数据层校验）：`announcement_id` 非空时 `recruitment_id`、`application_id` 必须为空；`application_id` 非空时 `recruitment_id` 必须非空；旧通知数据保持兼容。已删除目标的通知仍可见并展示删除提示，跳转目标接口仍按 404/权限校验，不恢复已删除内容的公开详情。
 

@@ -2,13 +2,13 @@
 import uuid
 
 from django.contrib.auth import authenticate
-from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 
 from apps.accounts import ratelimit
 from apps.accounts.identity import is_tongji_email, resolve_role
 from apps.accounts.models import User
+from apps.accounts.passwords import validate_new_password
 from apps.accounts.sso import SSOIdentity
 from apps.core import clock
 from apps.core.errors import BizError, ErrorCode, Forbidden, ValidationFailed
@@ -36,8 +36,7 @@ def _register_rejected(email: str, ip: str, details: dict) -> ValidationFailed:
     Returns:
         ValidationFailed: 携带详情的 400 异常，由调用方抛出。
     """
-    ratelimit.record_failure(scope="email", value=email, kind=ratelimit.KIND_REGISTER)
-    ratelimit.record_failure(scope="ip", value=ip, kind=ratelimit.KIND_REGISTER)
+    ratelimit.record_auth_failure(email=email, ip=ip, kind=ratelimit.KIND_REGISTER)
     return ValidationFailed(details=details)
 
 
@@ -67,8 +66,7 @@ def register_with_password(
         BizError: 失败次数超限，RATE_LIMITED、HTTP 429。
     """
     normalized = (email or "").strip().lower()
-    ratelimit.check_limit(scope="email", value=normalized, kind=ratelimit.KIND_REGISTER)
-    ratelimit.check_limit(scope="ip", value=ip, kind=ratelimit.KIND_REGISTER)
+    ratelimit.check_auth_limits(email=normalized, ip=ip, kind=ratelimit.KIND_REGISTER)
     if not is_tongji_email(normalized):
         raise _register_rejected(normalized, ip, {"email": "须为 @tongji.edu.cn 邮箱"})
     clean_name = (name or "").strip()
@@ -79,7 +77,7 @@ def register_with_password(
     # 使用未保存实例执行相似度校验，避免密码与邮箱、姓名相近。
     candidate = User(email=normalized, name=clean_name)
     try:
-        validate_password(password, user=candidate)
+        validate_new_password(password, user=candidate)
     except DjangoValidationError as exc:
         raise _register_rejected(
             normalized, ip, {"password": "；".join(exc.messages)}
@@ -122,16 +120,13 @@ def login_with_password(*, email: str, password: str, ip: str = "") -> User:
         BizError: 失败次数超限，RATE_LIMITED、HTTP 429。
     """
     normalized = (email or "").strip().lower()
-    ratelimit.check_limit(scope="email", value=normalized, kind=ratelimit.KIND_LOGIN)
-    ratelimit.check_limit(scope="ip", value=ip, kind=ratelimit.KIND_LOGIN)
+    ratelimit.check_auth_limits(email=normalized, ip=ip, kind=ratelimit.KIND_LOGIN)
     user = authenticate(email=normalized, password=password)
     if user is None:
-        ratelimit.record_failure(scope="email", value=normalized, kind=ratelimit.KIND_LOGIN)
-        ratelimit.record_failure(scope="ip", value=ip, kind=ratelimit.KIND_LOGIN)
+        ratelimit.record_auth_failure(email=normalized, ip=ip, kind=ratelimit.KIND_LOGIN)
         raise BizError("邮箱或密码不正确", code=ErrorCode.AUTH_FAILED, http_status=401)
     if not user.is_active:
-        ratelimit.record_failure(scope="email", value=normalized, kind=ratelimit.KIND_LOGIN)
-        ratelimit.record_failure(scope="ip", value=ip, kind=ratelimit.KIND_LOGIN)
+        ratelimit.record_auth_failure(email=normalized, ip=ip, kind=ratelimit.KIND_LOGIN)
         raise Forbidden("账号已停用")
     ratelimit.clear_failures(scope="email", value=normalized, kind=ratelimit.KIND_LOGIN)
     return user
@@ -191,7 +186,7 @@ def login_with_sso(identity: SSOIdentity) -> User:
 
 
 def update_profile(user: User, nickname=None, email_notify_enabled=None) -> User:
-    """更新本人昵称和邮件通知偏好。
+    """更新本人昵称及保留的邮件偏好兼容字段；不触发邮件发送。
 
     Args:
         user: 待更新的用户对象，访问身份由调用方保证。

@@ -1,6 +1,8 @@
 """公告请求校验与响应序列化；字段约束见 backend/design_file/api.md 第 8 章。"""
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import URLValidator
 from rest_framework import serializers
 
 from apps.core.choices import AnnouncementTimeKind
@@ -29,9 +31,15 @@ def _validate_link_url(value):
     if value is None:
         return None
     value = value.strip()
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise serializers.ValidationError("须为 http:// 或 https:// 绝对地址")
+    try:
+        URLValidator(schemes=["http", "https"])(value)
+        parsed = urlsplit(value)
+        if not parsed.hostname:
+            raise ValueError("缺少主机名")
+        # URLValidator 校验地址结构，port 属性额外校验端口范围。
+        _ = parsed.port
+    except (DjangoValidationError, ValueError):
+        raise serializers.ValidationError("须为合法的 http:// 或 https:// 绝对地址") from None
     return value
 
 

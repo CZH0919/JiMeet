@@ -113,12 +113,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     - `uid` / `real_id`: 对外随机标识（uuid4().hex，32 位）与内部学号/工号，
       均唯一，real_id 不对外公开
     - `nickname` / `name`: 可自定义的昵称与真实姓名
-    - `email`: 同济邮箱，按小写唯一，用于登录预留与邮件通知
+    - `email`: 同济邮箱，按小写唯一，用于邮箱密码登录；后缀校验不代表邮箱归属已核验
     - `role`: 用户角色，只能是 student 或 teacher
     - `is_admin` / `is_active`: 业务管理员标记与账号是否启用，业务权限只看 is_admin
     - `password` / `sso_subject`: Django 哈希密码与统一身份认证稳定标识，
       数据库要求 password 非空或 sso_subject 非空，不保证存在可用的密码认证方式
-    - `email_notify_enabled`: 是否接收邮件通知，站内通知始终生成
+    - `email_notify_enabled`: 保留的邮件偏好兼容字段，当前不触发邮件发送
     - `privacy_consented_at`: 确认个人信息处理告知的时间，为空时不允许提交申请
     - `is_staff` / `is_superuser` / `groups` / `user_permissions`: 仅 Django Admin
       访问权限，不代表业务权限
