@@ -23,7 +23,7 @@ class ResumeDownloadView(PrivateAPIView):
             FileResponse: HTTP 200 的附件文件流，含安全展示名和格式 MIME；不使用 JSON 成功信封，禁止缓存。
 
         Raises:
-            BizError: 对象/文件不可见或留存到期时 404，撤回/失效状态禁读时 403。
+            BizError: 对象或文件不存在/不可见时 404；撤回、失效或招聘删除后发布者禁读为 403，本人仍可下载保留文件。
         """
         download = download_resume(request.user, application_id)
         try:

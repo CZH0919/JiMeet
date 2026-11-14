@@ -108,6 +108,7 @@ def modify_application(user, application_id: int, *, note=None, resume=None, upd
     """修改本人的处理中申请，并标记发布者尚未读取更新。
 
     替换成功提交后尝试清理旧文件，清理失败仅记日志；业务失败清理新文件。更新通知与审计随业务事务提交。
+    说明未变化且未上传新文件时保留版本和已阅标记，不产生更新事件。
 
     Args:
         user: 申请人本人。
@@ -167,6 +168,9 @@ def _save_application_update(
             raise Conflict(ErrorCode.APPLICATION_NOT_PROCESSING, "申请已失效，不能修改")
         if not rules.is_processable(recruitment, now):
             raise Conflict(ErrorCode.PROCESSING_WINDOW_CLOSED, "申请修改窗口已关闭")
+
+        if stored_resume is None and (not update_note or application.note == note):
+            return application, None
 
         update_fields = ["has_unseen_update", "updated_at"]
         application.has_unseen_update = True

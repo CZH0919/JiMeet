@@ -63,10 +63,10 @@ class RecruitmentApplicationListView(ApplicationAPIView):
             recruitment_id: 路径中的招募主键。
 
         Returns:
-            Response: HTTP 200，data 为 ApplicationSummary 分页；留存期内包含已删除招募的受限历史。
+            Response: HTTP 200，data 为 ApplicationSummary 分页；包含已删除招募的受限历史，不按固定期限隐藏。
 
         Raises:
-            BizError: 不是发布者、对象不存在或留存到期时 404；非法分页时 400。
+            BizError: 不是发布者或对象不存在时 404；非法分页时 400。
         """
         now = clock.now()
         recruitment = selectors.get_publisher_recruitment(request.user, recruitment_id, now)
@@ -104,7 +104,7 @@ class MyApplicationListView(ApplicationAPIView):
             request: 已认证请求；可按 status、recruitment_id 筛选，使用 page/page_size 分页。
 
         Returns:
-            Response: HTTP 200，data 为申请摘要分页；包含撤回记录，留存到期记录在分页前排除。
+            Response: HTTP 200，data 为申请摘要分页；包含撤回和失效记录，不按固定期限排除历史。
 
         Raises:
             ValidationFailed: 分页参数不合法，返回 400。
@@ -124,7 +124,7 @@ class ApplicationDetailView(ApplicationAPIView):
             Response: HTTP 200，data 为按关系裁剪的 ApplicationDetail；读取不清除发布者未读修改标记。
 
         Raises:
-            BizError: 申请不存在、无业务关系或留存到期时返回 404。
+            BizError: 申请不存在或无业务关系时返回 404。
         """
         now = clock.now()
         application = selectors.get_application(request.user, application_id, now)

@@ -3,7 +3,6 @@
 需认证的入口先检查会话和 CSRF，分别拒绝为 401 和 403；非法查询或请求数据通常返回 400，不支持的媒体类型返回 415。异常由统一处理器转换为错误信封；简历下载成功直接返回文件流。
 """
 
-from apps.core import clock
 from apps.core.pagination import paginate
 from apps.core.responses import ok, page
 from apps.core.serializers import EmptyBodySerializer
@@ -28,7 +27,7 @@ class NotificationListView(PrivateAPIView):
             ValidationFailed: 分页参数无效，返回 400。
         """
         queryset = selectors.list_notifications(
-            user=request.user, now=clock.now(), is_read=self.query.get("is_read"),
+            user=request.user, is_read=self.query.get("is_read"),
         )
         items, number, size, total = paginate(queryset, request)
         data = NotificationSerializer(items, many=True).data
@@ -46,7 +45,7 @@ class NotificationUnreadCountView(PrivateAPIView):
             Response: HTTP 200，data.unread_count 为当前可见的未读通知数量。
         """
         count = selectors.list_notifications(
-            user=request.user, now=clock.now(), is_read=False,
+            user=request.user, is_read=False,
         ).count()
         return ok({"unread_count": count})
 
@@ -68,7 +67,7 @@ class NotificationReadView(PrivateAPIView):
         """
         validate_data(EmptyBodySerializer, request.data)
         notification = services.mark_notification_read(
-            user=request.user, notification_id=notification_id, now=clock.now(),
+            user=request.user, notification_id=notification_id,
         )
         return ok(NotificationSerializer(notification).data)
 
@@ -87,5 +86,5 @@ class NotificationReadAllView(PrivateAPIView):
             ValidationError: 提供了业务字段，返回 400。
         """
         validate_data(EmptyBodySerializer, request.data)
-        updated_count = services.mark_all_notifications_read(user=request.user, now=clock.now())
+        updated_count = services.mark_all_notifications_read(user=request.user)
         return ok({"updated_count": updated_count})

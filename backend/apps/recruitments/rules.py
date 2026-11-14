@@ -66,46 +66,6 @@ def seven_day_deadline(r) -> datetime | None:
     return r.closed_at + timedelta(days=7) if r.closed_at is not None else None
 
 
-def retention_starts_at(r) -> datetime | None:
-    """读取关闭、满员和删除时间中最早的非空值。
-
-    Args:
-        r: 招募对象；调用方应先补执行或投影到期状态。
-
-    Returns:
-        datetime | None: 旧通知过滤的时间起点；未产生相关状态时为 None。
-    """
-    dates = [dt for dt in (r.closed_at, r.full_at, r.deleted_at) if dt is not None]
-    return min(dates) if dates else None
-
-
-def retention_expires_at(r) -> datetime | None:
-    """计算旧通知路径的兼容时间阈值。
-
-    Args:
-        r: 招募对象；调用方应先补执行或投影到期状态。
-
-    Returns:
-        datetime | None: 最早状态时间加 180 天，或 None。
-    """
-    start = retention_starts_at(r)
-    return start + timedelta(days=180) if start is not None else None
-
-
-def is_retention_expired(r, now: datetime) -> bool:
-    """判断旧通知路径是否到达兼容时间阈值。
-
-    Args:
-        r: 招募对象。
-        now: 带时区的业务时间。
-
-    Returns:
-        bool: 存在留存起点且 now 到达或超过终点时为 True。
-    """
-    expires = retention_expires_at(r)
-    return expires is not None and now >= expires
-
-
 def is_apply_open(r, now: datetime) -> bool:
     """判断招募是否仍处于投递窗口。
 

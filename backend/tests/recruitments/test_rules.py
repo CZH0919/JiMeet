@@ -52,20 +52,6 @@ class RulesTest(SimpleTestCase):
         for check in (rules.is_apply_open, rules.is_editable, rules.is_publisher_deletable, rules.is_processable):
             self.assertFalse(check(self.r, self.now))
 
-    def test_retention_uses_earliest_event(self):
-        self.assertIsNone(rules.seven_day_deadline(self.r))
-        self.assertIsNone(rules.retention_starts_at(self.r))
-        self.assertIsNone(rules.retention_expires_at(self.r))
-        self.assertFalse(rules.is_retention_expired(self.r, self.now))
-        self.r.full_at = self.now
-        self.r.closed_at = self.now + timedelta(days=2)
-        self.r.deleted_at = self.now + timedelta(days=3)
-        end = self.now + timedelta(days=180)
-        self.assertEqual(rules.retention_starts_at(self.r), self.now)
-        self.assertEqual(rules.retention_expires_at(self.r), end)
-        self.assertFalse(rules.is_retention_expired(self.r, end - timedelta(seconds=1)))
-        self.assertTrue(rules.is_retention_expired(self.r, end))
-
     def test_closed_recruitment_is_not_editable_or_deletable(self):
         self.r.status = "closed"
         self.r.closed_at = self.now
@@ -90,17 +76,6 @@ class RulesTest(SimpleTestCase):
         self.assertEqual(
             publish_state_for_viewer(anonymous, self.r, self.now).can_apply, True,
         )
-
-    def test_retention_starts_from_earliest_of_each_field(self):
-        base = self.now
-        for field in ("closed_at", "full_at", "deleted_at"):
-            with self.subTest(earliest=field):
-                self.r.closed_at = self.r.full_at = self.r.deleted_at = None
-                for index, name in enumerate(("closed_at", "full_at", "deleted_at")):
-                    later = base + timedelta(days=index + 1)
-                    setattr(self.r, name, base if name == field else later)
-                self.assertEqual(rules.retention_starts_at(self.r), base)
-                self.assertEqual(rules.retention_expires_at(self.r), base + timedelta(days=180))
 
     def test_recruitment_permissions(self):
         publisher = SimpleNamespace(pk=1, is_authenticated=True, is_admin=False)

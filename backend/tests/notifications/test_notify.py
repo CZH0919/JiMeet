@@ -15,7 +15,7 @@ from tests.factories import make_application, make_recruitment, make_user
 class NotificationTypesTest(SimpleTestCase):
     def test_types_and_templates(self):
         self.assertEqual(types.APPLICATION_EVENTS, {value for value in types.ALL if value.startswith("application_")})
-        self.assertEqual(types.REQUIRES_APPLICATION, types.APPLICATION_EVENTS | {types.RECRUITMENT_UPDATED})
+        self.assertEqual(types.REQUIRES_APPLICATION, types.APPLICATION_EVENTS | {types.RECRUITMENT_UPDATED, types.RECRUITMENT_DELETED})
         self.assertEqual(types.ANNOUNCEMENT_EVENTS, {types.ANNOUNCEMENT_ADMIN_REMOVED})
         for type in types.ALL:
             context = {"announcement_title": "测试公告"} if type in types.ANNOUNCEMENT_EVENTS else {"recruitment_title": "测试招聘"}
@@ -83,13 +83,13 @@ class NotifyTest(TxTestCase):
 
     def test_publisher_notifications_without_application(self):
         with mock.patch("apps.notifications.mail.dispatch"), transaction.atomic():
-            for type in (types.RECRUITMENT_DELETED, types.RECRUITMENT_CLOSED, types.ADMIN_REMOVED):
+            for type in (types.RECRUITMENT_CLOSED, types.ADMIN_REMOVED):
                 with self.subTest(type=type):
-                    notification = self._notify(recipient=self.publisher, type=type, application=None)
+                    notification = self._notify(recipient=self.publisher, type=type, application=None, context={"reason_label": "违规内容"})
                     self.assertIsNotNone(notification)
                     self.assertIsNone(notification.application_id)
                     self.assertEqual(notification.recruitment_id, self.r.pk)
-        self.assertEqual(Notification.objects.filter(recipient=self.publisher).count(), 3)
+        self.assertEqual(Notification.objects.filter(recipient=self.publisher).count(), 2)
 
     def test_recruitment_deleted_for_applicant_requires_application(self):
         with transaction.atomic(), self.assertRaises(ValueError):
@@ -163,15 +163,15 @@ class NotifyTest(TxTestCase):
                 recruitment=self.r, application=self.app, announcement=announcement,
             )
 
-    def test_retention_applies_to_application_and_recruitment_events(self):
+    def test_historical_application_and_recruitment_events_are_created(self):
         now = clock.now()
         self.r.full_at = now - timedelta(days=180)
         with self.freeze_at(now), transaction.atomic():
             for type in (types.APPLICATION_REJECTED, types.RECRUITMENT_UPDATED, types.RECRUITMENT_DELETED):
                 with self.subTest(type=type):
-                    self.assertIsNone(self._notify(type=type))
-        self.assertEqual(Notification.objects.count(), 0)
+                    self.assertIsNotNone(self._notify(type=type))
+        self.assertEqual(Notification.objects.count(), 3)
         self.assertEqual(EmailLog.objects.count(), 0)
         with transaction.atomic():
-            notification = self._notify(recipient=self.publisher, type=types.ADMIN_REMOVED, application=None)
+            notification = self._notify(recipient=self.publisher, type=types.ADMIN_REMOVED, application=None, context={"reason_label": "违规内容"})
         self.assertIsNotNone(notification)

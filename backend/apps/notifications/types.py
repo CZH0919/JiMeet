@@ -1,4 +1,4 @@
-"""通知类型及关联要求；申请事件前缀供留存清理复用。"""
+"""通知类型、目标关联及业务接收人分类。"""
 APPLICATION_SUBMITTED = "application_submitted"
 APPLICATION_ACCEPTED = "application_accepted"
 APPLICATION_REJECTED = "application_rejected"
@@ -12,7 +12,7 @@ ANNOUNCEMENT_ADMIN_REMOVED = "announcement_admin_removed"
 
 ALL = frozenset(value for name, value in list(globals().items()) if name.isupper() and isinstance(value, str))
 APPLICATION_EVENTS = frozenset(value for value in ALL if value.startswith("application_"))
-# 删除通知也可发给发布者，因此其申请关联由 service 按接收人身份判断。
-REQUIRES_APPLICATION = APPLICATION_EVENTS | {RECRUITMENT_UPDATED}
+PUBLISHER_APPLICATION_EVENTS = frozenset({APPLICATION_SUBMITTED, APPLICATION_UPDATED, APPLICATION_WITHDRAWN})
+REQUIRES_APPLICATION = APPLICATION_EVENTS | {RECRUITMENT_UPDATED, RECRUITMENT_DELETED}
 # 公告治理通知只关联公告，与招聘/申请关联互斥。
 ANNOUNCEMENT_EVENTS = frozenset({ANNOUNCEMENT_ADMIN_REMOVED})

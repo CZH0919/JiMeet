@@ -53,8 +53,6 @@
 | DELETE | `/announcements/{id}` | 可用（本人删除） |
 | DELETE | `/admin/announcements/{id}` | 可用（治理删除） |
 
-招聘、申请及简历规则已适配；通知的长期过滤及完整矩阵留待阶段 5，当前差异见第 7、9 章。
-
 `/applications/{id}/read` 用于确认申请修改；通知已读使用 `/notifications/{id}/read` 或 `/notifications/read-all`。
 
 正式身份认证（SSO）、真实邮件投递、聊天、推荐、通用用户主页和软删除恢复暂未提供。本轮（Sprint2）业务事件不再产生邮件任务，见第 7、9 章兼容说明。
@@ -439,6 +437,8 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 对象可见但非发布者编辑/关闭为 403；窗口不允许为 409 `RECRUITMENT_NOT_EDITABLE`。人数上限低于已接受人数为 409 `HEADCOUNT_BELOW_ACCEPTED`；等于时在同一事务进入 full 并拒绝其余处理中申请。重复删除已删除对象为 404，重复关闭已关闭对象为 409，不重复生成通知。
 
+在权限与操作窗口有效的前提下，PATCH 的内容和标签集合与当前值相同时返回当前详情，不更新 `updated_at` 或生成通知；标签顺序变化不视为内容变化。相同内容的并发请求在锁内只产生一次有效修改。
+
 软删除在同一事务内将 `deleted_at` 置为删除时间，补执行后仍为 `processing/accepted` 的申请转为 `invalid`，并将 `accepted_count` 归零。已拒绝、已撤回状态不变，招聘原业务状态及 `closed_at/full_at` 保留；历史接受结果由状态变更记录追溯，不因人数归零重新开放，不提供恢复入口。
 
 **通知接收范围：** 招募修改或删除只通知变更前仍为 processing/accepted 的申请人，已撤回或已拒绝者不再通知。调低人数上限触发满员时，相关申请人收到招募变更通知，剩余处理中申请另收到自动拒绝结果。治理删除另向发布者发送包含名称、处置结果和原因的通知；手动关闭向发布者发送明确的手动关闭通知，不立即拒绝已有申请。删除审计、通知及业务变更同事务提交，权限拒绝沿用公共审计处理。
@@ -538,7 +538,7 @@ const response = await fetch(`/api/v1/recruitments/${recruitmentId}/applications
 
 `PATCH /applications/{id}` 使用 multipart，接受可选的 `note`、`resume`，至少提供一项。省略的字段不变，空字符串 note 清空说明，文件不能通过空值删除。仅申请人本人在申请仍为 processing、招聘未删除且仍处于开放或关闭后七天处理窗口内可修改。成功 200 返回 ApplicationDetail，置未读修改标记并通知发布者；旧文件在事务成功提交后才清理，失败保留原文件。
 
-成功的申请修改、撤回、接受、拒绝及实际改变暂留标记的操作，均在业务事务中写入 `application_update` 审计记录；重复暂留/取消暂留和只读已阅确认不另记。审计不保存申请说明或简历内容。
+实际发生的申请修改、撤回、接受、拒绝及暂留标记变化，均在业务事务中写入 `application_update` 审计记录；重复暂留/取消暂留和只读已阅确认不另记。有效窗口内仅重复提交相同说明且未上传新文件时，返回当前详情，不更新版本、未读修改标记、通知或审计。上传新文件仍作为一次申请更新处理。审计不保存申请说明或简历内容。
 
 以下动作使用 POST，除 read 外请求体为空或 `{}`；成功均为 200、ApplicationDetail：
 
@@ -565,7 +565,9 @@ hold/unhold 在仍满足操作条件且标记已是目标值时返回当前记�
 
 ## 7. 通知接口
 
-Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（可空）、`application_id`（可空）、`announcement_id`（可空）、`is_read`、`created_at`。不返回接收人邮箱、私有文件信息、简历内容或申请人的完整身份；客户端跳转目标仍受目标接口的权限校验。
+Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（可空）、`application_id`（可空）、`announcement_id`（可空）、`target_is_deleted`、`is_read`、`created_at`。不返回接收人邮箱、私有文件信息、简历内容或申请人的完整身份；客户端跳转目标仍受目标接口的权限校验。
+
+`target_is_deleted` 表示关联招聘或公告当前已软删除；无关联的旧通知为 false。它不表示申请状态或下载权限。通知正文保留事件发生时的语义，当前申请状态及操作权限从申请接口读取。例如，历史“申请已接受”通知仍保留，招聘后来被删除时该标记为 true，申请接口返回 invalid 及删除提示。
 
 | 接口 | 输入与行为 | 成功 data |
 | --- | --- | --- |
@@ -574,11 +576,24 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 | POST /notifications/{id}/read | 空请求体或 `{}`，只能修改自己的通知；重复调用保持已读 | Notification |
 | POST /notifications/read-all | 空请求体或 `{}`，只更新当前用户当前可见的未读通知 | `{"updated_count":0}`，返回本次实际更新条数 |
 
-无权读取或修改他人的通知返回 404；`is_read` 空值、数字或其他字符串为 400。列表、未读数及标记操作采用一致的可见范围；通知不因固定留存期限隐藏（9.1 目标口径，阶段 5 移除既有截断），可见性仅由接收人、目标关联权限与删除提示规则决定。标记全部已读不包括该操作完成后才新建的通知。
+无权读取或修改他人的通知返回 404；`is_read` 空值、数字或其他字符串为 400。生成、列表、未读数和已读操作均不按固定期限过滤通知。读取和已读采用相同的接收人及目标关联权限：申请关联须匹配招聘且接收人为申请人或发布者；纯招聘通知限发布者；公告通知限作者；无关联旧通知仍仅限其接收人。管理员无额外读取权。标记全部已读仅更新该次数据库语句可见的未读记录，之后到达的通知保持未读。
 
-通知 type 沿用 `backend/apps/notifications/types.py`：`application_submitted`、`application_accepted`、`application_rejected`、`application_withdrawn`、`application_updated`、`recruitment_closed`、`recruitment_updated`、`recruitment_deleted`、`admin_removed`，以及 `announcement_admin_removed`（公告被管理员治理删除，接收人为公告作者，含公告名称、处置结果、原因与 `announcement_id` 引用）。读取申请列表或通知列表不会自动标记通知已读。
+通知类型及接收规则如下，创建时由统一业务服务校验关联与接收人：
 
-目标关联规则（阶段 3 起在数据层校验）：`announcement_id` 非空时 `recruitment_id`、`application_id` 必须为空；`application_id` 非空时 `recruitment_id` 必须非空；旧通知数据保持兼容。已删除目标的通知仍可见并展示删除提示，跳转目标接口仍按 404/权限校验，不恢复已删除内容的公开详情。
+| type | 接收人及内容 | 关联 |
+| --- | --- | --- |
+| application_submitted / application_updated / application_withdrawn | 招聘发布者；分别提示提交、修改或撤回 | 招聘及对应申请 |
+| application_accepted / application_rejected | 申请人；拒绝明确区分发布者主动拒绝、满员和七天处理期届满 | 招聘及对应申请 |
+| recruitment_updated | 修改前仍为 processing/accepted 的申请人；若随后自动拒绝，另发拒绝通知 | 招聘及对应申请 |
+| recruitment_deleted | 本次转为 invalid 的申请人；说明招聘删除及申请失效 | 招聘及对应申请 |
+| recruitment_closed / admin_removed | 招聘发布者；关闭区分手动/到期，治理删除包含处置原因 | 仅招聘 |
+| announcement_admin_removed | 公告作者；包含名称、处置结果和原因，撤销管理员身份后仍可读取本人通知 | 仅公告 |
+
+暂留/取消暂留、正常发布/编辑/本人删除公告不生成状态或广播通知。事件通知与业务同事务提交；状态锁、重复动作校验及无变化修改判断保证不重复处理同一事件。迟到补执行仍生成必要通知，`created_at` 为实际创建时间，申请的 `decided_at` 保留业务生效时间。
+
+读取申请或通知列表均不会自动标记通知已读；通知已读不会清除申请的 `has_unseen_update`，申请已阅确认也不会修改通知已读状态。
+
+目标关联规则：`announcement_id` 非空时 `recruitment_id`、`application_id` 必须为空；`application_id` 非空时 `recruitment_id` 必须非空且与申请所属招聘一致。保留旧通知数据，不重写历史正文、不补造缺失事件；关联不符的记录不进入列表或已读范围。已删除目标的通知仍可见并通过 `target_is_deleted` 提示删除；目标接口继续按 404/权限校验，不恢复公开详情或发布者的简历访问权。
 
 **邮件兼容（Sprint2）：** 业务事件只生成站内通知，不再创建 `EmailLog(PENDING)`、不再挂接派发回调；`email_notify_enabled` 保留为兼容字段，不控制任何发信行为，新前端不得展示为可用邮件通知功能。`email_log` 表及历史数据保留。
 
@@ -628,7 +643,7 @@ Announcement 对象字段：`id`、`title`、`content`、`time_kind`（`deadline
 - `now >= deadline` 停止新投递；未满员的关闭招募仅在 `now < closed_at + 7 天` 时允许处理已有申请及申请人修改/撤回，到七天边界自动拒绝剩余 processing。
 - 满员优先于关闭；处理中的申请被自动拒绝后不能修改或撤回。暂留不延长处理窗口。
 - 删除将 processing/accepted 转 invalid；已接受申请的 `decided_at` 保留首次决定时间，失效时间取招募的 `deleted_at`。
-- **长期读取：** 申请与简历已移除固定 180 天过滤；七天处理窗口、归属校验、删除提示及字段裁剪保持不变。通知生成、列表、未读数和已读仍含旧期限逻辑，阶段 5 统一适配；当前不宣称长期通知已完成。物理清理仍为预留，缺失的文件或历史不自动恢复。
+- **长期读取：** 申请、简历和通知均不按固定 180 天期限隐藏；通知生成亦不受该期限抑制。七天处理窗口、归属校验、删除提示及字段裁剪保持不变。物理清理仍为预留，缺失的文件或历史不自动恢复；已经完成但历史上未生成的事件不补造通知。
 - 读取不得清除未读标记。时间到期的展示状态、权限与筛选应一致；数据库状态补执行和通知由既有状态工具在写操作或同步命令中完成。
 
 ### 9.2 事务与资源一致性

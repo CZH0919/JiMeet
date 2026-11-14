@@ -14,7 +14,7 @@ class Notification(models.Model):
     - `recipient`: 通知接收人
     - `type`: 由应用层常量维护的通知类型，有意不加数据库 CHECK
     - `title` / `content`: 标题与正文，不应包含简历内容及完整个人信息
-    - `recruitment` / `application`: 可空的关联对象，供跳转及留存清理使用
+    - `recruitment` / `application`: 可空的关联对象，供授权历史查询及跳转使用
     - `announcement`: 可空的关联公告（治理删除通知），与招聘/申请关联互斥
     - `is_read` / `created_at`: 已读标记与创建时间
 

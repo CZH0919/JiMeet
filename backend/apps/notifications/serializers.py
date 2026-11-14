@@ -35,11 +35,25 @@ class NotificationSerializer(serializers.ModelSerializer):
     recruitment_id = serializers.IntegerField(read_only=True, allow_null=True)
     application_id = serializers.IntegerField(read_only=True, allow_null=True)
     announcement_id = serializers.IntegerField(read_only=True, allow_null=True)
+    target_is_deleted = serializers.SerializerMethodField()
+
+    def get_target_is_deleted(self, instance):
+        """返回关联招聘或公告当前是否已删除，不改变历史通知内容。
+
+        Args:
+            instance: 已经接收人与关联权限过滤的通知，目标由查询层预加载。
+
+        Returns:
+            bool: 关联招聘或公告已软删除时为 True；无关联旧通知为 False。
+                该标记不表示申请状态，也不授予目标详情或简历访问权。
+        """
+        target = instance.announcement if instance.announcement_id is not None else instance.recruitment
+        return target is not None and target.deleted_at is not None
 
     class Meta:
         model = Notification
         fields = (
             "id", "type", "title", "content", "recruitment_id",
-            "application_id", "announcement_id", "is_read", "created_at",
+            "application_id", "announcement_id", "target_is_deleted", "is_read", "created_at",
         )
         read_only_fields = fields

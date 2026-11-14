@@ -178,6 +178,7 @@ def update_recruitment(user, recruitment_id: int, *, data: dict):
     """修改开放窗口内的招募，并原子更新关联状态和通知。
 
     先独立提交到期补执行。更新通知只发给变更前 processing/accepted 申请人；人数上限降至已接受人数时进入 full 并拒绝其余处理中申请。
+    内容与标签集合均未变化时不写入新版本或通知；相同内容的并发请求在锁内合并为一次有效变更。
 
     Args:
         user: 招募发布者。
@@ -197,17 +198,22 @@ def update_recruitment(user, recruitment_id: int, *, data: dict):
         _authorize(user, locked)
         if not policies.can_edit(user, locked, now):
             raise Conflict(ErrorCode.RECRUITMENT_NOT_EDITABLE)
-        for field in CONTENT_FIELDS:
-            if field in data:
-                setattr(locked, field, data[field])
+        changed = [field for field in CONTENT_FIELDS if field in data and getattr(locked, field) != data[field]]
+        for field in changed:
+            setattr(locked, field, data[field])
         rules.validate_deadline(locked.deadline, now)
         rules.validate_headcount(locked.min_headcount, locked.max_headcount)
         if locked.max_headcount < locked.accepted_count:
             raise Conflict(ErrorCode.HEADCOUNT_BELOW_ACCEPTED)
-        if "tag_ids" in data:
-            _replace_tags(locked, _active_tags(data["tag_ids"]))
+        tags = _active_tags(data["tag_ids"]) if "tag_ids" in data else None
+        tags_changed = tags is not None and {tag.pk for tag in tags} != set(
+            RecruitmentTag.objects.filter(recruitment=locked).values_list("tag_id", flat=True)
+        )
+        if not changed and not tags_changed:
+            return locked
+        if tags_changed:
+            _replace_tags(locked, tags)
         applications = _active_applications(locked)
-        changed = [field for field in CONTENT_FIELDS if field in data]
         # 变更前仍有效的申请人收到招募更新；若随后满员，再收到各自处理结果。
         _notify_applicants(locked, applications, types.RECRUITMENT_UPDATED)
         if locked.max_headcount == locked.accepted_count:
