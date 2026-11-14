@@ -1,99 +1,37 @@
-# 公告功能（FR-09）数据库与数据接口实现规划
+# 公告模块设计说明
 
-> 状态：设计已按审核意见确认，database.md 1.9（v0.4）已同步；代码尚未编写。
-> 范围：只含数据库表结构和基础的数据库读写接口，不含复杂业务逻辑，业务编排由后端协作者负责。
+公告面向已登录用户展示竞赛与活动信息，独立于招聘及申请。对外字段、请求示例与错误码以 [api.md](../api.md) 第 8 章为准；表结构见 [database.md](database.md) 第 1.9 节。
 
-## 1 已确认的决定
+## 1. 模型与查询
 
-| 事项 | 决定 |
-|---|---|
-| 新增字段 | `time_kind`、`event_at`（必填）、`link_url`（可空）；“报名方式”等写在 `content` |
-| 发布权限 | `is_admin` 用户 |
-| 编辑权限 | 仅发布者本人，其他管理员也不能编辑 |
-| 删除权限 | 发布者本人或任一管理员；理由可选，写入 AuditLog.reason |
-| 置顶 | 保留 `is_pinned`，只通过编辑接口（PATCH）修改，不设独立的置顶接口；发布者本来就是管理员，不另做限制；置顶变更与编辑合并，统一记 `announcement_update` 审计 |
-| 查看权限 | 已登录用户；未登录不可查看 |
-| 通知 | 发布公告不生成站内通知和邮件 |
-| 排序 | `is_pinned DESC, created_at DESC, id DESC`；无置顶时即为发布时间倒序 |
+- `Announcement` 保存作者、标题、纯文本正文、时间类型与时间值，以及可选的报名链接和招聘关联；作者和招聘外键采用 PROTECT。
+- `time_kind` 为 `deadline` 或 `event`；`event_at` 为带时区时间，不限制必须晚于当前时刻。报名说明可放入正文，链接仅接受 HTTP/HTTPS 绝对地址。
+- 列表仅返回未删除公告，按 `created_at DESC, id DESC` 稳定分页；预加载作者和关联招聘。保留 `is_pinned` 数据字段，HTTP 不提供置顶写入，也不按其排序。
+- 关联招聘被关闭、满员或软删除不删除公告。`recruitment_available` 仅表示该招聘存在且未删除，不表示其仍可投递申请。
 
-## 2 表结构
+## 2. 权限与事务
 
-以 database.md 1.9 为准，这里不重复字段表。要点：
-- 表名 `announcement`，外键 `author_id`、`recruitment_id` 均 PROTECT。
-- CHECK：`time_kind IN ('deadline','event')`。
-- 索引：`announcement_list_idx`（`is_pinned DESC, created_at DESC`，条件 `deleted_at IS NULL`）；`announcement_recruitment_idx`（`recruitment_id`，条件非空）。
-- `event_at` 是否晚于当前时间、`link_url` 格式由应用层校验。
+| 操作 | 权限与行为 |
+| --- | --- |
+| 列表、详情 | 已登录用户；已删除或不存在的公告返回 404。 |
+| 发布 | 当前业务管理员；写入审计，不广播通知。 |
+| 编辑 | 当前业务管理员且为作者；其他管理员不能编辑。 |
+| 本人删除 | 当前业务管理员且为作者；软删除并写入审计，不产生治理通知。 |
+| 治理删除 | 当前业务管理员；原因必填，软删除、审计和作者通知同事务提交。 |
 
-## 3 将修改和新增的文件
+写服务锁定公告后重新校验删除状态、当前管理员权限与作者身份；撤销管理员权限后，既有会话也不能继续管理旧公告。重复删除返回 404，不恢复对象或重复创建通知。公告作者失去管理员权限后仍可读取本人收到的治理通知。
 
-新增 `backend/apps/announcements/`：
+## 3. 模块职责
 
-| 文件 | 内容 |
-|---|---|
-| `__init__.py`、`apps.py` | 应用注册 |
-| `models.py` | Announcement 模型，含 CHECK 与索引 |
-| `migrations/0001_initial.py` | 由 `makemigrations` 生成 |
-| `selectors.py` | 只读查询 |
-| `services.py` | 薄的写入函数，同一事务内写表并写审计 |
-| `admin.py`（可选） | Django Admin 查看公告 |
+| 模块 | 职责 |
+| --- | --- |
+| `backend/apps/announcements/models.py`、`migrations/` | 模型、枚举约束、索引及迁移。 |
+| `backend/apps/announcements/selectors.py` | 未删除公告查询、稳定排序与关联预加载。 |
+| `backend/apps/announcements/serializers.py` | 严格输入校验、公开字段及关联招聘可用性输出。 |
+| `backend/apps/announcements/services.py` | 锁内权限与状态复核、写入、审计和治理通知。 |
+| `backend/apps/announcements/views.py`、`urls.py` | HTTP 入口、会话与 CSRF 校验、分页及统一响应。 |
+| `backend/apps/notifications/` | 公告通知关联与读取，校验作者身份并提供目标删除提示。 |
 
-修改已有文件：
+公告治理通知仅关联公告，与招聘/申请关联互斥；包含公告名称、处置结果及原因，不恢复已删除公告的详情访问，不创建邮件任务。
 
-| 文件 | 改动 |
-|---|---|
-| `backend/config/settings/base.py` | `INSTALLED_APPS` 增加 `apps.announcements` |
-| `backend/apps/audit/actions.py` | 增加 3 个常量 `ANNOUNCEMENT_PUBLISH`、`ANNOUNCEMENT_UPDATE`、`ANNOUNCEMENT_DELETE`，并加入 `ALL`；`audit/service.py` 不用改 |
-| `backend/tests/test_schema.py` | 增加公告表的约束和索引断言 |
-| `backend/tests/announcements/`（新增） | 模型约束、selectors、services 的测试 |
-
-不需要改：`Recruitment`、`Notification`、`EmailLog` 的模型和迁移，`core/permissions.py`（已有 `IsAdminFlag` 和 `IsAuthenticatedBiz`）。
-
-## 4 数据层接口（Python 函数，供协作者的视图调用）
-
-只读，位于 `selectors.py`：
-
-| 函数 | 说明 |
-|---|---|
-| `list_announcements()` | 未删除的公告，按 `is_pinned DESC, created_at DESC, id DESC` 排序，`select_related` 作者和关联招募；分页由 `core.pagination.paginate` 完成 |
-| `get_announcement(announcement_id)` | 返回未删除的公告；不存在或已删除时返回 None |
-
-写入，位于 `services.py`，每个函数在一个事务内完成“写表 + 写审计”：
-
-| 函数 | 审计动作 | 说明 |
-|---|---|---|
-| `create_announcement(*, author, title, content, time_kind, event_at, link_url=None, recruitment=None)` | `announcement_publish` | 创建公告 |
-| `update_announcement(announcement, *, actor, **fields)` | `announcement_update` | 更新 title、content、time_kind、event_at、link_url、recruitment、is_pinned |
-| `soft_delete_announcement(announcement, *, actor, reason=None)` | `announcement_delete` | 设置 `deleted_at`，理由可选 |
-
-权限判断不放在这些函数里，由协作者在视图层判断：
-
-| 操作 | 判断 |
-|---|---|
-| 发布 | `IsAdminFlag` |
-| 编辑（含修改 `is_pinned`） | `announcement.author_id == request.user.pk` |
-| 删除 | `author_id == request.user.pk` 或 `request.user.is_admin` |
-| 查看 | `IsAuthenticatedBiz` |
-
-## 5 建议的 REST 接口（契约，由协作者实现视图和序列化）
-
-路径沿用现有风格：前缀 `/api/v1/`，不带末尾斜杠。
-
-| 方法 | 路径 | 权限 | 说明 |
-|---|---|---|---|
-| GET | `/announcements` | 已登录 | 公告列表，分页 |
-| GET | `/announcements/<id>` | 已登录 | 公告详情，含 `recruitment_id` 及招募链接所需信息 |
-| POST | `/announcements` | 管理员 | 发布公告 |
-| PATCH | `/announcements/<id>` | 仅发布者 | 编辑公告，可含 `is_pinned` |
-| DELETE | `/announcements/<id>` | 发布者或管理员 | 软删除，请求体可带可选 `reason` |
-
-置顶、取消置顶通过 PATCH 的 `is_pinned` 完成，没有单独的接口。
-
-## 6 与其他文档的一致性
-
-- database.md：已更新 v0.4 版本记录、1.9、1.8 的审计示例与必记操作、第 2 节关系图。
-- `backend/design_file/api.md`：尚未加入公告接口。它的接口概览表目前只列已实现（可用）的接口，协作者实现视图后再补，状态标为“可用”。
-- implementation_plan*.md、week1_*.md 是历史阶段的计划，不修改。
-
-## 7 下一步
-
-审核通过后按这个顺序做：models 与迁移 → audit 动作常量 → selectors 与 services → 测试。视图、序列化和 api.md 的更新交给协作者。
+共享回归位于 `backend/tests/announcements/`、`backend/tests/notifications/`；交付与验收结论见 `Project_Progress_Record/Sprint2_BackEnd/Record/`。

@@ -87,7 +87,7 @@ class AnnouncementListView(PrivateAPIView):
     def get(self, request):
         """GET /api/v1/announcements：未删除公告分页列表。
 
-        按 created_at DESC, id DESC 稳定排序；本轮不按置顶排序。
+        按 created_at DESC, id DESC 稳定排序；不按置顶排序。
 
         Args:
             request: 已登录请求；可传 page、page_size。

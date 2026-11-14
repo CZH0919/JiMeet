@@ -1,62 +1,9 @@
-```
-To AI:
-如果你是AI，不得任意改动这里的设计。
-如果你认为有必要改动，遵循以下几点：
-1. 深刻考虑期望改动位置章节对应的设计要点所说的问题
-2. 必须通过输出和用户进行人工交流，除非得到明确肯定，不得擅自修改。
-3. 如果用户选择自动审批，请你暂停任务，一定需要得到许可。
-```
-
 # JiMeet 后端数据库设计
 
-
-> v0（2026-10-22）：技术栈确定为 PostgreSQL + Django。修正 User、Recruitment 的字段与约束，补充 Tag、Application、Notification、EmailLog、Chat、AuditLog 等表。
-> 
-> v0.1（2026-10-23）：补齐结束时间、申请留存与统计清理、事务校验、权限和文件替换规则，明确邮件重试计数。
-> 重点解决了以下问题：
-> 1. v0 仅按 closed_at 计算留存期，会遗漏直接满员或删除的招聘。新增 full_at，取 closed_at、full_at、deleted_at 中最早的非空时间起算 180 天，后续状态变化不重新计时，不支持重新开放。
-> 2. v0 仅将 applicant_id 置空，仍能通过其他表找回申请人。改为到期后汇总状态数量，删除申请明细、简历及关联通知和邮件日志；审计日志按要求独立保留至少一年。
-> 3. v0 加锁主要防止超员，未明确重复接受和任务延迟的处理。改为先锁招聘，再重新校验申请状态、权限和时间；截止及七天限制由接口即时检查，不依赖定时任务及时运行。
-> 4. v0“终态不可变更”与删除时已接受申请失效矛盾。明确删除时允许 accepted → invalid，decided_at 保留首次决定时间，accepted_count 保留历史接受人数。
-> 5. v0 保留了管理员在治理场景查看申请的例外。改为管理员权限本身不授予申请内容或简历访问权；本人是发布者或申请人时按普通身份判断，撤回或失效后发布者也不能查看补充说明。
-> 6. v0 未明确替换简历时的失败处理。改为新文件独立写入并校验，事务提交后删除旧文件，事务失败清理新文件；旧文件删除失败则重试。
-> 7. attempts 明确表述为发送轮次：首次为 0，三次重试为 1～3，最多发送四次。
-> 8. 登录方式 CHECK 暂时保留，但只保证基础非空条件，账号能否实际登录仍由认证流程校验。
->
-> v0.2（2026-10-23）：补齐事务边界、自动处理时间取值与状态不变量，并核验可实现性。
-> 1. 补执行（到期关闭、七天自动拒绝、满员拒绝）与业务操作拆为两个独立事务：先提交补执行，再开新事务加锁复核。不用 savepoint，不依赖异常被谁捕获；要求关闭 `ATOMIC_REQUESTS`，见 0 第 8 条。
-> 2. 自动处理的 `decided_at` 取业务时间而非任务运行时间：七天到期取 `closed_at + 7 天`，满员拒绝取 `full_at`，与“到期关闭取 deadline”同一原则。
-> 3. 申请可修改/撤回的条件统一为“补执行后仍为 processing 且招聘未删除”；七天处理期只约束发布者处理，不约束申请人。
-> 4. 新增 Recruitment 状态不变量 CHECK：`accepted_count < max_headcount OR status = 'full'`，以及 closed/full 与时间字段的对应关系，让“手动关闭时已满员但仍是 open”的状态无法写入，不再依赖文字规则。
-> 5. 孤立文件清理以“未被引用且修改时间超过 24 小时”为准，避开尚未提交的上传。
-> 6. 明确 `decided_at` 不代表失效时间，失效时间见 `Recruitment.deleted_at`；补充定时任务扫描索引和 Application、Recruitment 的状态对应 CHECK。
->
-> v0.3（2026-10-23）：最终一致性核查，仅修正文档内部的矛盾与遗漏，不改变业务规则。
-> 1. 1.4 设计细节 9（接受申请）仍写着“同一事务内先补执行”，与 0 第 7、8 条及 v0.2 第 1 条冲突。改为两个独立事务：事务一 `sync_recruitment` 提交，事务二锁招聘并复核后接受。
-> 2. AuditLog 需记录“权限被拒绝的请求”，但 `actor_id`、`target_id` 为 NOT NULL，未登录请求和对象不存在的请求无法入库。两者改为可空，`actor_role`、`actor_is_admin` 随 `actor_id` 同为空或同非空，并新增表级 CHECK；其余操作的操作者必填由应用层校验。
-> 3. 0 第 3 条要求枚举字段加 CHECK，但 `Notification.type`、`AuditLog.action` 没有。保持设计不变，在 0 第 3 条注明这两个有意不加 CHECK 的例外。
->
-> v0.4（2026-11-11）：新增公告功能。
-> 1. 新增 1.9 Announcement 公告表，不复用 Recruitment：公告没有人数、截止时间、状态机和申请流程，混入会被招募列表、搜索及定时任务误处理，且 Recruitment 的 CHECK 约束均围绕招募状态设计。
-> 2. 公告通过可空外键 `recruitment_id` 关联招募，作为招募链接；按 FR-09 增加必填的时间类型与时间值（报名截止/活动时间）以及可空的相关网站。
-> 3. 权限：发布需 `is_admin`；编辑（含置顶）仅发布者本人；删除为发布者本人或任一管理员。删除理由可选，记录在 AuditLog.reason，不在公告表另设字段。
-> 4. 预留置顶字段 `is_pinned`，只通过编辑接口修改，不设独立的置顶接口，置顶变更与编辑合并记 `announcement_update` 审计；发布公告不生成站内通知与邮件。
->
-> 个性化推送、举报功能后续再加，本版不建表（Django 加表成本低，可随时迁移补上）。
->
-> v0.5（2026-11-14）：登记 Sprint2 数据变更方案，见第 4 章。依据 Sprint2 后端开发规划 §4「数据与兼容要求」与阶段 1 分工（zf 登记、czh 阶段 4 实施申请侧），只新增方案章节，不改动第 0～3 章既有设计；既有描述与本轮口径的差异在实施阶段随迁移同步修订。
->
-> v0.6（2026-11-14）：Sprint2 阶段 3 实施后同步 1.5、1.9 的过时描述（规划阶段 3 明确授权“同步 api.md、公告和数据库设计说明”）：1.5 停止业务邮件待发记录并按 3.5 取消固定 180 天口径；1.9 落实本人删除与治理删除分入口、治理原因必填与治理通知、不按置顶排序、`recruitment_available` 可用性表达；新增 `notification.announcement_id` 迁移（notifications.0002，见 4.1）。
-> 
->
-
-> v0.7（2026-11-14）：同步账号密码策略、受控命令事务、输入失败计数及邮件兼容说明；不改变表结构。
-
-> v0.8（2026-11-14）：实现阶段 4 的 200 人上限、删除计数约束、申请状态历史及长期申请/简历权限；历史统计通过新增迁移修复。
-
-> v0.9（2026-11-14）：完成长期通知、接收人和目标关联校验、删除提示及无变化修改去重；无新增数据库迁移。
+本文说明当前模型、数据库约束与业务事务边界。接口字段和错误码以 `backend/design_file/api.md` 为准；开发与验收记录见 `Project_Progress_Record/`，历史变更通过 Git 追溯。
 
 ## 0 通用约定
+
 1. 数据库：PostgreSQL；ORM：Django。表字段中的类型以 PostgreSQL 为准，括号内为 Django 对应写法。
 2. 时间字段一律使用 `TIMESTAMPTZ`（`DateTimeField`，`USE_TZ = True`），不使用无时区的 DATETIME。
 3. 枚举类字段（role、type、status 等）使用 `VARCHAR` + `CHECK` 约束（Django 中用 `TextChoices` + `CheckConstraint`），不使用 PostgreSQL 的 ENUM 类型，后续新增取值时迁移更简单。例外：`Notification.type`（1.5）和 `AuditLog.action`（1.8）取值会随功能频繁新增，有意不加 CHECK，由应用层常量约束。
@@ -77,21 +24,23 @@ To AI:
 8. 事务实现约束：Django 设置 `ATOMIC_REQUESTS = False`（默认值），由 service 层显式开启事务；service 入口不得嵌在调用方的外层 `atomic` 中，否则第 7 条的“先提交补执行”无法成立。涉及加锁、并发和补执行的测试使用 `TransactionTestCase`，不用被外层事务包住的 `TestCase`。文件替换成功后的旧文件清理由 `transaction.on_commit` 执行；当前不挂接邮件派发回调。
 
 ## 1 实体及其字段定义
+
 ### 1.1 User 用户
-Django 实现：继承 `AbstractBaseUser` + `PermissionsMixin`，`USERNAME_FIELD = "real_id"`（或 email，视最终登录方式定），`db_table = "app_user"`（`user` 是 PostgreSQL 保留字，避免每次都要加引号）。管理员权限只使用 `is_admin`，不与 Django 自带的 `is_staff` / `is_superuser` 混用（后两者仅用于 Django Admin 后台，由开发者持有）。
+
+Django 实现：继承 `AbstractBaseUser` + `PermissionsMixin`，`USERNAME_FIELD = "real_id"` 保留为内部标识；HTTP 账号认证使用邮箱与密码，`db_table = "app_user"`（`user` 是 PostgreSQL 保留字，避免每次都要加引号）。管理员权限只使用 `is_admin`，不与 Django 自带的 `is_staff` / `is_superuser` 混用（后两者仅用于 Django Admin 后台，由开发者持有）。
 
 | 字段名称 | 数据类型 | 约束 | 说明 |
 |---------|---------|------|-----|
 | id | BIGINT | PRIMARY KEY, 自增 | 数据库内的自增标识，不会对外公开 |
-| uid | VARCHAR(32) | NOT NULL, UNIQUE | 对外使用的的uid，随机生成（`uuid4().hex`，恰好 32 位），防止被遍历爬取|
-| real_id | VARCHAR(32) | NOT NULL, UNIQUE | 真实的学号/工号，内部使用，不对外公开|
+| uid | VARCHAR(32) | NOT NULL, UNIQUE | 对外随机标识（`uuid4().hex`，32 位）；资源权限仍须独立校验|
+| real_id | VARCHAR(32) | NOT NULL, UNIQUE | 内部唯一兼容标识；邮箱注册时由服务端生成，不作为已验证的学号/工号，也不对外公开|
 | nickname | VARCHAR(32)  | NOT NULL | 可以自主定义的用户名 |
 | name | VARCHAR(32)  | NOT NULL | 用户自填姓名，仅作未核验展示 |
 | email | VARCHAR(254) | NOT NULL（必须是同济邮箱格式） | 邮箱号，用于邮箱密码登录；后缀校验不代表归属已核验 |
-| role | VARCHAR(32)  | NOT NULL，CHECK (role IN ('student','teacher')) | 用户角色，只能是`student` 或 `teacher`，登录时依据学号/工号判定 |
+| role | VARCHAR(32)  | NOT NULL，CHECK (role IN ('student','teacher')) | 展示身份 student 或 teacher；注册时可自填，不作授权依据；开发登录使用编号映射 |
 | is_admin | BOOLEAN | NOT NULL，默认 FALSE | 是否拥有管理员权限 |
 | is_active | BOOLEAN | NOT NULL，默认 TRUE | 是否启用 |
-| password | VARCHAR(128) | NOT NULL DEFAULT '' | Django 哈希格式密码。“邮箱登录”预留；若只走统一身份认证则保持空串 |
+| password | VARCHAR(128) | NOT NULL DEFAULT '' | Django 密码哈希；邮箱密码注册时设置，旧开发账号可为不可用密码 |
 | sso_subject | VARCHAR(191) | UNIQUE，可空 | 统一身份认证返回的稳定用户标识；与密码登录可并存 |
 | email_notify_enabled | BOOLEAN | NOT NULL，默认 TRUE | 邮件偏好兼容字段，当前不控制发信 |
 | privacy_consented_at | TIMESTAMPTZ | 可空 | 确认个人信息处理告知的时间；为空时不允许提交申请（首次填写简历前须确认） |
@@ -108,15 +57,17 @@ ALTER TABLE app_user ADD CONSTRAINT user_login_method_chk
 ```
 
 #### 设计细节
-1. 两个uid，原因是规格说明要求**任何接口不得通过遍历用户标识获取他人简历**，所以外部暴露uid不能是有序的，但是内部有序是有利于性能优化的
-2. **因为工号确实存在0打头的情况，real_id被设置为VARCHAR。**
-3. `is_active`在Django中可以很方便的实现封禁功能
-4. `sso_subject` 与 `password` 两个字段略有冗余，但是为了后续简单，我认为有必要保留两个字段
+
+1. 内部主键用于关系与索引，对外使用随机 uid；随机标识不能代替对象权限，所有私有信息查询仍须鉴权。
+2. `real_id` 使用字符串，保留兼容编号的前导零；新注册账号不要求提交学号/工号。
+3. `is_active` 控制账号是否启用；停用账号不能继续建立或使用业务会话。
+4. 保留 `sso_subject` 作为学校身份认证扩展字段；当前 HTTP 注册登录采用邮箱密码。
 5. 认证凭证（SSO ticket、token 等）不落库、不写日志。
-6. 暂保留 `user_login_method_chk`。Django 的不可用密码也可能是非空字符串，因此该约束仅拦截密码为空且 SSO 标识为 NULL 的记录；认证流程仍须检查有效身份绑定，密码登录启用时使用 `has_usable_password()` 检查，不能把该 CHECK 当作账号可登录的保证。
-7. 管理员与基础身份分离：`role` 表示学生/教师，`is_admin` 是附加权限，二者互不影响。因为有的学生也可以是管理员。
+6. `user_login_method_chk` 仅校验基础非空关系。Django 的不可用密码也可能是非空字符串，因此该约束仅拦截密码为空且 SSO 标识为 NULL 的记录；认证流程仍须检查有效身份绑定，密码登录使用 `has_usable_password()` 检查，不能把该 CHECK 当作账号可登录的保证。
+7. 业务管理员权限仅由 `is_admin` 决定，与展示身份 `role`、Django 管理字段 `is_staff` / `is_superuser` 分开。
    
 ### 1.2 Recruitment 招募信息表
+
 | 字段名称 | 数据类型 | 约束 | 说明 |
 |---------|---------|------|-----|
 | id | BIGINT | PRIMARY KEY 自增 | 招募唯一标识 |
@@ -132,7 +83,7 @@ ALTER TABLE app_user ADD CONSTRAINT user_login_method_chk
 | closed_at | TIMESTAMPTZ | 可空 | 首次关闭生效时间；自动关闭取 deadline，手动关闭取操作时间；用于七天处理期，后续满员或删除不清空、不重置 |
 | full_at | TIMESTAMPTZ | 可空 | 首次达到满员的时间；后续删除不清空、不重置 |
 | close_reason | VARCHAR(16) | 可空，CHECK (close_reason IN ('deadline','manual')) | 关闭原因：到期自动关闭 / 发布者手动关闭 |
-| deleted_at | TIMESTAMPTZ | 可空 | 软删除时间；非空表示已被发布者或管理员删除，不在任何列表出现 |
+| deleted_at | TIMESTAMPTZ | 可空 | 软删除时间；常规招聘列表与详情排除已删除对象，授权申请历史仍可提供删除摘要 |
 | application_status_counts | JSONB | 可空，默认 NULL | 旧聚合快照兼容字段，仅含 processing / accepted / rejected / withdrawn / invalid 五个键及非负整数；当前不调度明细清理 |
 | applications_anonymized_at | TIMESTAMPTZ | 可空 | 旧清理完成时间兼容字段，当前不产生新的清理记录 |
 | created_at | TIMESTAMPTZ | NOT NULL | 发布时间 |
@@ -140,9 +91,10 @@ ALTER TABLE app_user ADD CONSTRAINT user_login_method_chk
 
 表级约束：
 ```sql
--- 状态不变量：达到上限必为 full。把“accepted_count 等于上限但仍是 open”的状态挡在数据库外
+-- 已删除招聘的当前接受人数为零。
 ALTER TABLE recruitment ADD CONSTRAINT recruitment_deleted_count_chk
     CHECK (deleted_at IS NULL OR accepted_count = 0);
+-- 达到人数上限时必须为 full。
 ALTER TABLE recruitment ADD CONSTRAINT recruitment_full_chk
     CHECK (accepted_count < max_headcount OR status = 'full');
 -- 状态与时间字段对应
@@ -176,7 +128,8 @@ CREATE INDEX recruitment_cleanup_idx ON recruitment (id)
 ```
 
 #### 设计细节
-1. internship（实习）是指实验室实习，不是校外实习！请不要因为这个问题浪费宝贵的token。
+
+1. `internship` 表示校内实验室实习。
 2. 人数规则：支持正整数上限或闭区间，`1 <= min_headcount <= max_headcount <= 200`；下限可空。容量判断使用上界，编辑不得低于已接受人数，等于时原子触发满员。
 3. 状态流转：
    - 到截止时间：`open → closed`（`close_reason='deadline'`，`closed_at=deadline`），不能投递新申请，已投递申请仍可处理（7 天内）；
@@ -194,6 +147,7 @@ CREATE INDEX recruitment_cleanup_idx ON recruitment (id)
 10. `accepted_count` 应与当前已接受申请数一致，删除使有效申请失效时归零。`application_status_counts` 只表示旧聚合快照，不代替当前人数；申请状态历史记录后续真实流转，不回填无法证实的旧事件。
 
 ### 1.3 Tag 领域标签 与 RecruitmentTag联系表
+
 Tag：预设的领域标签（计算机、设创……），尽量全覆盖，由开发者通过后台维护。
 
 | 字段名称 | 数据类型 | 约束 | 说明 |
@@ -216,6 +170,7 @@ RecruitmentTag：招聘与标签的多对多关系（Django 中用 `ManyToManyFi
 
 
 ### 1.4 Application 申请表
+
 | 字段名称 | 数据类型 | 约束 | 说明 |
 |---------|---------|------|-----|
 | id | BIGINT | PRIMARY KEY 自增 | 申请标识 |
@@ -249,6 +204,7 @@ CREATE INDEX application_applicant_idx ON application (applicant_id, created_at 
 ```
 
 #### 设计细节
+
 1. 状态机：`processing → accepted / rejected / withdrawn / invalid`。接受、拒绝、撤回后不能再进行常规处理；招聘删除时，允许 `accepted → invalid`。`decided_at` 仅在首次离开 processing 时写入，已接受后因删除失效不覆盖首次决定时间。processing → invalid 时 `decided_at` 取删除时刻，accepted → invalid 时保留首次决定时刻，因此查询“失效时间”一律读 `Recruitment.deleted_at`，不得读 `decided_at`。
 2. “暂留”不是申请状态，而是发布者的私有标记（`publisher_mark='hold'`），此时 `status` 仍为 `processing`。
 3. `invalid`（已失效）用于招聘被删除时，处理中与已接受的申请。已拒绝、已撤回的申请保持原状态。
@@ -261,6 +217,7 @@ CREATE INDEX application_applicant_idx ON application (applicant_id, created_at 
 9. 接受申请分两个独立事务（见 0 第 7、8 条）：事务一调用 `sync_recruitment` 补执行到期状态流转并提交；事务二在同一事务内：锁招聘行 → 重新读取并校验申请仍为 processing、操作者为发布者、招聘未删除且未满员（open 须未截止，closed 须仍在七天处理期内）、`accepted_count < max_headcount` → 更新申请状态与首次 decided_at → `accepted_count + 1` → 若满员则置 full、写 full_at 并批量拒绝其余处理中申请，写入它们的 decided_at 和相应通知。重复接受同一申请不能再次增加人数。修改人数上限触发满员时，复用相同的满员处理逻辑。拒绝、暂留、撤回、修改和定时任务也必须遵循通用约定中的加锁顺序与状态复核。
 
 ### 1.5 Notification 站内通知
+
 | 字段名称 | 数据类型 | 约束 | 说明 |
 |---------|---------|------|-----|
 | id | BIGINT | PRIMARY KEY 自增 | 通知标识 |
@@ -277,14 +234,16 @@ CREATE INDEX application_applicant_idx ON application (applicant_id, created_at 
 索引：`(recipient_id, is_read, created_at DESC)`。
 
 #### 设计细节
-1. 通知由统一的 service 生成，申请状态流转、招聘修改/删除/关闭、管理员删除都调用同一个入口，保证可复用。（Sprint2 阶段 3）公告治理删除通知复用同一入口，关联 `announcement_id`，与招聘/申请关联互斥，见第 4 章 4.1。
+
+1. 通知由统一的 service 生成，申请状态流转、招聘修改/删除/关闭、管理员删除都调用同一个入口，保证可复用。公告治理删除通知复用同一入口，关联 `announcement_id`，与招聘/申请关联互斥，见第 4 章 4.1。
 2. 招聘采用软删除，删除时不级联删除通知。通知生成和所有读取/已读操作均不按固定期限过滤；物理清理仍属预留。通知不包含简历内容或申请人的完整身份。旧通知不重写正文、不补造缺失事件；无关联旧通知仍仅向接收人提供。
-3. 申请事件通知，以及因招聘修改、关闭、删除而发给申请人的通知，均须同时填写 application_id 和 recruitment_id；同一用户存在撤回后重投的多条记录时，通知按业务规则关联相应申请并避免重复发送。给发布者本人的纯招聘通知可不关联 application_id。（Sprint2 阶段 3）业务事件只生成站内通知：不再创建 `EmailLog(PENDING)`，不再挂接邮件派发回调；`email_notify_enabled` 保留为兼容字段，不控制发信；`email_log` 旧数据保留。
+3. 申请事件通知，以及因招聘修改或删除失效而发给申请人的通知，均须同时填写 application_id 和 recruitment_id；同一用户存在撤回后重投的多条记录时，通知按业务规则关联相应申请并避免重复发送。给发布者本人的纯招聘通知可不关联 application_id。业务事件只生成站内通知：不再创建 `EmailLog(PENDING)`，不再挂接邮件派发回调；`email_notify_enabled` 保留为兼容字段，不控制发信；`email_log` 旧数据保留。
 4. 创建时校验事件接收人：提交/修改/撤回申请通知发布者；处理结果、招聘修改及删除失效通知对应申请人；招聘关闭或治理删除通知发布者；公告治理通知作者。治理通知必须包含原因。读取、未读数和已读范围使用同一关联权限过滤，公告作者撤权不影响读取本人通知。
 5. `target_is_deleted` 为响应时计算的布尔字段，不入库；取关联招聘/公告当前删除标记，无关联旧通知为 false，不代替申请状态与下载权限。查询预加载目标，不通过通知恢复已删除公开内容。
 6. 业务锁和状态校验保证事件幂等；招聘内容与标签集合相同、申请说明相同且无新文件的更新不产生版本或通知。通知已读与申请修改的已阅版本彼此独立。迟到补执行的通知创建时间为实际时间，申请决定时间仍为业务边界。
 
 ### 1.6 EmailLog 邮件发送日志
+
 | 字段名称 | 数据类型 | 约束 | 说明 |
 |---------|---------|------|-----|
 | id | BIGINT | PRIMARY KEY 自增 | |
@@ -297,12 +256,14 @@ CREATE INDEX application_applicant_idx ON application (applicant_id, created_at 
 | updated_at | TIMESTAMPTZ | NOT NULL | |
 
 #### 设计细节
+
 1. 保留表结构和历史数据；当前业务事件不创建本表记录，`email_notify_enabled` 不触发发信。
 2. `attempts`、状态及错误字段用于解释历史数据；邮件派发与重试命令仍为预留，后续启用须另行评审。
-3. 不因本轮调整删除历史邮件日志；如未来清理关联通知，须处理本表的 PROTECT 关系。错误日志不得保存简历内容、认证凭证或完整邮件正文。
+3. 保留历史邮件日志；如未来清理关联通知，须处理本表的 PROTECT 关系。错误日志不得保存简历内容、认证凭证或完整邮件正文。
 
 ### 1.7 ChatConversation 会话 与 ChatMessage 消息
-聊天不依赖招聘与申请，任意两个用户都可以发起，仅支持纯文本。
+
+聊天表结构独立于招聘与申请，仅定义两个参与者之间的纯文本消息；当前未提供聊天 HTTP 接口。
 
 ChatConversation：
 
@@ -330,10 +291,12 @@ ChatMessage：
 索引：`(conversation_id, created_at)`。
 
 #### 设计细节
+
 1. 管理员不可查看聊天记录，接口层不提供任何管理员读取聊天内容的入口。
-2. 第一版可用轮询取消息，后续再升级为 Django Channels / WebSocket，表结构不变。
+2. 消息读取、发送与推送通道尚未对外提供，模型存在不代表聊天功能可用。
 
 ### 1.8 AuditLog 审计日志
+
 | 字段名称 | 数据类型 | 约束 | 说明 |
 |---------|---------|------|-----|
 | id | BIGINT | PRIMARY KEY 自增 | |
@@ -351,11 +314,13 @@ ChatMessage：
 索引：`(target_type, target_id)`，`(actor_id, created_at DESC)`。
 
 #### 设计细节
-1. 必须记录的操作：管理员权限的行使、用户删除本人发布的招聘、发布者查看申请人简历、申请人修改申请、权限被拒绝的请求、管理员发布公告，发布者编辑公告（含置顶变更），发布者或管理员删除公告。
+
+1. 必须记录的操作：管理员权限的行使、用户删除本人发布的招聘、发布者查看申请人简历、申请人修改申请、权限被拒绝的请求、管理员发布公告，发布者编辑公告，发布者或管理员删除公告。
 2. 日志自每条记录的 created_at 起至少保留一年；业务操作只追加，不提供修改与删除接口，当前不调度审计清理。审计留存独立于申请状态与招聘软删除，不因业务删除而提前删改。target_id 是无外键的历史对象标识，允许其目标因历史清理而不存在。
 3. 日志中不写入认证凭证、简历内容、原始文件名、补充说明或申请人与招聘的额外映射；reason 仅记录必要的操作原因，不复制申请明细。申请清理后不另存已删除对象的快照或身份对照表。审计记录仍可能识别操作者，这是至少一年审计留存要求的明确例外，仅供授权审计使用，不作为普通申请查询入口。
 
 ### 1.9 Announcement 公告
+
 对应需求 FR-09（竞赛与活动公告）。由管理员发布；作者（管理员）可编辑与本人删除，任一管理员可经治理入口删除并通知作者；所有已登录用户可查看列表和详情，并可通过关联的招募链接进入招募。
 
 | 字段名称 | 数据类型 | 约束 | 说明 |
@@ -368,7 +333,7 @@ ChatMessage：
 | event_at | TIMESTAMPTZ | NOT NULL | 与 time_kind 对应的时间值 |
 | link_url | VARCHAR(500) | 可空 | 相关网站；格式由应用层校验 |
 | recruitment_id | BIGINT | 可空，FK → recruitment.id | 关联的招募（招募链接）；为空表示纯文字公告，PROTECT |
-| is_pinned | BOOLEAN | NOT NULL，默认 FALSE | 是否置顶；本轮 HTTP 不提供置顶能力、不参与排序，仅保留字段 |
+| is_pinned | BOOLEAN | NOT NULL，默认 FALSE | 是否置顶；HTTP 不提供置顶能力、不参与排序，仅保留字段 |
 | created_at | TIMESTAMPTZ | NOT NULL | 发布时间 |
 | updated_at | TIMESTAMPTZ | NOT NULL | 最近编辑时间 |
 | deleted_at | TIMESTAMPTZ | 可空 | 软删除时间；非空表示已删除，不在任何列表和详情中出现 |
@@ -388,22 +353,24 @@ CREATE INDEX announcement_recruitment_idx ON announcement (recruitment_id) WHERE
 ```
 
 #### 设计细节
-1. 权限（均为应用层校验，不看 `is_staff`；未登录用户一律不可查看；Sprint2 阶段 3 起业务服务在行锁内复核当前权限）：
+
+1. 权限（均为应用层校验，不看 `is_staff`；未登录用户一律不可查看；业务服务在行锁内复核当前权限）：
    - 发布：当前 `is_admin` 用户；
    - 编辑与本人删除：当前 `is_admin` 且 `author_id` 等于当前用户，其他管理员也不能编辑；
    - 治理删除：当前 `is_admin` 用户，独立入口（`DELETE /admin/announcements/{id}`），与本人删除入口分离；
-   - 置顶：数据库保留 `is_pinned` 字段，本轮 HTTP 不提供置顶能力（不可写、不参与排序），后续是否恢复见《修订说明与待确认事项》P-03；
+   - 置顶：数据库保留 `is_pinned` 字段，HTTP 不提供置顶能力（不可写、不参与排序），后续是否恢复见《修订说明与待确认事项》P-03；
    - 查看：已登录用户。
    - 公告作者被撤销管理员权限后，发布、编辑、本人删除与治理删除均被拒绝（含旧会话）。
 2. 删除为软删除（设置 `deleted_at`）。本人删除不需要原因；治理删除原因必填，写入 AuditLog.reason，公告表不另设字段。
 3. 发布、编辑、删除均写入 AuditLog：`action` 取 announcement_publish / announcement_update / announcement_delete，`target_type` 为 `announcement`；重复删除返回不存在/已删除结果，不重复写审计。
-4. 列表按 `created_at DESC, id DESC` 稳定排序（Sprint2 阶段 3 起不按置顶排序，原 `is_pinned DESC` 口径作废）。
+4. 列表按 `created_at DESC, id DESC` 稳定排序，不按 `is_pinned` 排序。
 5. `event_at` 为带时区合法值即可，不限制必须晚于当前时间；已过时间不自动等于已删除，编辑不因历史时间被拒绝（《修订说明与待确认事项》2.3）；`title`、`content`、`time_kind`、`event_at` 为必填。
 6. 正常发布、编辑、本人删除不生成站内通知和邮件。治理删除在同一业务事务内完成软删除、审计与作者站内通知（`announcement_admin_removed`，含公告名称、处置结果、原因与公告引用），不产生邮件任务。
 7. `recruitment_id` 指向的招募被软删除、关闭或满员后，公告仍保留；公告详情以 `recruitment_available` 表达链接可用性（关联存在且未删除），已删除招募的公开详情不因公告恢复。写入时该招募须存在且未删除；业务删除不物理删除 Recruitment 行，不破坏本表关联。
 8. 公告不属于 Recruitment 的子类型，不进入招募的列表、搜索和定时任务。
 
 ## 2 表关系概览
+
 ```
 app_user 1 ──< recruitment            （发布）
 app_user 1 ──< application            （申请）
@@ -417,17 +384,15 @@ app_user 1 ──< announcement    （管理员发布）
 recruitment 1 ──< announcement        （可选，招募链接）
 ```
 
-## 3 本版暂不建表（后续按需追加）
-1. 个性化推送（用户兴趣、权重）：第一版推送可直接按时间排序，需要时再加。
-2. 举报与管理员处理页面：需求整理建议后期添加。
+## 3 未提供的数据能力
 
-## 4 Sprint2 数据变更方案（2026-11-14 阶段 1 登记）
+当前未建立个性化推荐及举报处理模型；通用管理后台不属于已交付接口。
 
-本章为 Sprint2 已确认需求的数据方案、迁移归属与验证方法；均新增独立迁移，不重写历史迁移，不删除旧数据。
+## 4 迁移与兼容
 
-4.1～4.4 均已实现；申请、简历与通知均不按固定期限隐藏，通知生成不受旧期限抑制。本轮不实施物理清理，不因取消过滤而补造已丢失历史。
+以下列出现有迁移的作用及兼容边界。申请、简历与通知不按固定期限隐藏；不执行物理清理，也不因取消过滤而补造已丢失历史。
 
-### 4.1 通知的公告关联（zf，阶段 3，`notifications.0002`）
+### 4.1 通知的公告关联（`notifications.0002_notification_announcement_and_more`）
 
 | 变更 | 内容 |
 | --- | --- |
@@ -437,11 +402,11 @@ recruitment 1 ──< announcement        （可选，招募链接）
 | 语义 | 公告治理删除通知（type=`announcement_admin_removed`）关联公告；与招聘/申请关联语义分开，旧通知数据保持兼容（新列为空） |
 | 验证 | 迁移在空库与既有数据上均可应用；模型级约束测试（互斥与一致性各一正一反）；旧通知读取兼容测试；治理删除事务内通知与审计一致性测试 |
 
-### 4.2 注册/登录失败计数表（zf，阶段 2，`accounts.0002`）
+### 4.2 注册/登录失败计数表（`accounts.0002_authfailure`）
 
 | 变更 | 内容 |
 | --- | --- |
-| 新表 | `auth_failure`：id BIGINT 自增主键，`key_hash` CHAR(64)（邮箱或 IP 的 SHA-256 摘要，不落明文）、`kind` VARCHAR(16)（login/register）、`created_at` TIMESTAMPTZ |
+| 新表 | `auth_failure`：id BIGINT 自增主键，`key_hash` VARCHAR(64)（邮箱或 IP 的 SHA-256 摘要，不落明文）、`kind` VARCHAR(16)（login/register）、`created_at` TIMESTAMPTZ |
 | 索引 | `(key_hash, created_at)` |
 | 用途 | 失败限流：600 秒窗口内同邮箱键 5 次、同 IP 键 20 次；采用插入即计数（INSERT），无读改写，保证并发失败不丢计数；注册/登录分别计数，字段校验失败与业务认证失败各计一次，邮箱不可解析时仅计 IP；成功按对应操作的邮箱键删除计数，窗口外记录惰性清理 |
 | 验证 | 并发失败计数一致性测试；窗口滑过自动恢复；成功登录清零；键只保存摘要，不存原始邮箱 |

@@ -78,7 +78,7 @@ class AnnouncementTest(TxTestCase):
         second = _create(self.admin, title="second")
         third = _create(self.admin, title="third")
         self.assertEqual(_ids(), [third.pk, second.pk, first.pk])
-        # 本轮 HTTP 不按置顶排序：置顶不改变顺序
+        # HTTP 不按置顶排序：置顶不改变顺序
         services.update_announcement(first.pk, actor=self.admin, is_pinned=True)
         self.assertEqual(_ids(), [third.pk, second.pk, first.pk])
         services.update_announcement(first.pk, actor=self.admin, is_pinned=False)

@@ -52,7 +52,7 @@ class AnnouncementAPITest(TxTestCase):
         self.assertEqual(
             (first.status_code, second.status_code, third.status_code), (201, 201, 201)
         )
-        # 置顶不参与排序（本轮 HTTP 不提供置顶能力，直接改库模拟既有数据）
+        # 既有置顶数据不改变列表顺序。
         Announcement.objects.filter(pk=first.data["data"]["id"]).update(is_pinned=True)
         response = self.client.get(LIST_URL)
         self.assertEqual(response.status_code, 200)

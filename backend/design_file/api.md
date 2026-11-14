@@ -55,13 +55,13 @@
 
 `/applications/{id}/read` 用于确认申请修改；通知已读使用 `/notifications/{id}/read` 或 `/notifications/read-all`。
 
-正式身份认证（SSO）、真实邮件投递、聊天、推荐、通用用户主页和软删除恢复暂未提供。本轮（Sprint2）业务事件不再产生邮件任务，见第 7、9 章兼容说明。
+学校 SSO、邮件投递、聊天、推荐、通用用户主页和软删除恢复未提供；账号使用邮箱密码注册登录，业务通知通过站内通知送达。
 
 ### 1.1 运行约定
 
 依赖见 `backend/requirements/base.txt`：Python 3.12+、PostgreSQL 15+，Django 6.1.2、DRF 3.18.3、psycopg 3.3.6。配置从进程环境变量读取，不自动加载 `.env`；变量清单见 `backend/.env.example`。
 
-`seed_tags` 初始化标签；`run_sync_recruitments` 补执行到期关闭、七天到期及满员后的剩余申请拒绝，需要独立调用或调度。邮件发送与留存物理清理命令仍为预留，调用返回 `CommandError: reserved`；Sprint2 起业务事件不再创建邮件待发记录（见第 7 章兼容说明）。
+`seed_tags` 初始化标签；`run_sync_recruitments` 补执行到期关闭、七天到期及满员后的剩余申请拒绝，需要独立调用或调度。邮件发送与留存物理清理命令为预留，调用返回 `CommandError: reserved`。
 
 受控账号管理：`grant_admin` / `revoke_admin` 按邮箱授予或撤销业务管理员，锁定目标账号并与审计同事务提交，重复操作不重复记录状态变化。`init_password` 仅初始化无可用密码的账号，拒绝覆盖已有密码，复用注册的 8～128 字符及相似度策略；支持终端无回显输入或标准输入管道，不接收密码参数。三类命令失败均回滚账号变更。不提供在线授予或仅凭邮箱重设密码的入口。
 
@@ -75,7 +75,7 @@
 - 时间为带时区的 ISO 8601 字符串，例如 `2026-11-15T18:00:00+08:00`，客户端按时间点解析；不能依赖固定时区文本。截止边界以服务端时间为准。
 - 下文“省略字段”与值为 `null` 不同：无权读取的字段省略；有权读取但没有值的字段返回 `null`。列表无结果返回空数组。
 - 声明输入字段的接口拒绝未知、只读字段。JSON 人数及资源 ID 接受整数，拒绝布尔值、浮点数和数字字符串；具体字段约束见各接口。
-- `/me`、标签、招募、申请、私有简历和通知接口采用严格查询校验：未知或重复键返回 400。健康检查、会话辅助及 SSO 预留接口不使用查询参数。
+- `/me`、标签、招募、申请、私有简历、公告和通知接口采用严格查询校验：未知或重复键返回 400。健康检查、会话辅助及 SSO 预留接口不使用查询参数。
 - 资源不存在或对当前用户不可见时返回 404，具体删除与留存边界见对应接口。
 
 ### 2.2 响应信封与分页
@@ -595,11 +595,11 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 
 目标关联规则：`announcement_id` 非空时 `recruitment_id`、`application_id` 必须为空；`application_id` 非空时 `recruitment_id` 必须非空且与申请所属招聘一致。保留旧通知数据，不重写历史正文、不补造缺失事件；关联不符的记录不进入列表或已读范围。已删除目标的通知仍可见并通过 `target_is_deleted` 提示删除；目标接口继续按 404/权限校验，不恢复公开详情或发布者的简历访问权。
 
-**邮件兼容（Sprint2）：** 业务事件只生成站内通知，不再创建 `EmailLog(PENDING)`、不再挂接派发回调；`email_notify_enabled` 保留为兼容字段，不控制任何发信行为，新前端不得展示为可用邮件通知功能。`email_log` 表及历史数据保留。
+**邮件功能边界：** 业务事件只生成站内通知，不创建 `EmailLog(PENDING)` 或挂接派发回调；`email_notify_enabled` 为兼容字段，不控制发信，前端不应将其展示为可用邮件功能。`email_log` 表及历史数据保留。
 
 ## 8. 公告接口（FR-09）
 
-状态：HTTP 层已于 Sprint2 阶段 3 交付（视图、序列化、路由与业务锁内复核）。表结构见 `backend/design_file/design_manuscript/database.md` 1.9。
+公告模型与权限设计见 `backend/design_file/design_manuscript/announcement_plan.md`；字段与约束见 `backend/design_file/design_manuscript/database.md` 1.9。
 
 Announcement 对象字段：`id`、`title`、`content`、`time_kind`（`deadline` 报名截止时间 / `event` 活动时间）、`event_at`、`link_url`（可空）、`recruitment_id`（可空）、`recruitment_available`（布尔，关联招募当前是否可用）、`is_pinned`（只读）、`created_at`、`updated_at`、`author`（PublicUser：`uid`、`nickname`、`role`）与 `permissions`。不返回 `real_id`、邮箱等内部信息。
 
@@ -616,7 +616,7 @@ Announcement 对象字段：`id`、`title`、`content`、`time_kind`（`deadline
 | link_url | 可选，可显式 null 清空 | 最多 500 字，仅 `http://`、`https://` 绝对地址 |
 | recruitment_id | 可选，可显式 null 清空 | 正整数；写入时须存在且未删除；此后该招募被删除/关闭/满员不影响公告保留 |
 
-`is_pinned` 为数据库保留字段，本轮 HTTP 不提供置顶能力：不可写、不参与排序与筛选。未知字段、`is_pinned` 写入、只读字段提交均返回 400。
+`is_pinned` 为数据库保留字段，HTTP 不提供置顶能力：不可写、不参与排序与筛选。未知字段、`is_pinned` 写入、只读字段提交均返回 400。
 
 | 接口 | 权限 | 输入与行为 | 成功 data |
 | --- | --- | --- | --- |
@@ -652,4 +652,4 @@ Announcement 对象字段：`id`、`title`、`content`、`time_kind`（`deadline
 
 申请提交先检查身份与隐私确认，再校验并暂存文件；业务失败清理新文件，简历替换提交成功后才尝试清理旧文件。业务事件仅创建站内通知，不排队邮件任务。
 
-申请列表在分页前过滤归属及有效状态，与详情使用相同时间投影，不按固定期限过滤；通知剩余适配见 9.1。简历下载在短事务内复核权限、打开文件并记录发布者查看审计，文件传输在事务外进行。GET 请求不代替状态同步或显式已读操作。
+申请列表在分页前过滤归属及有效状态，与详情使用相同时间投影，不按固定期限过滤；通知查询及已读采用一致的关联权限。简历下载在短事务内复核权限、打开文件并记录发布者查看审计，文件传输在事务外进行。GET 请求不代替状态同步或显式已读操作。

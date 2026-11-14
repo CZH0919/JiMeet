@@ -1,7 +1,4 @@
-"""通知的 HTTP 入口，完整请求与字段契约见 backend/design_file/api.md。
-
-需认证的入口先检查会话和 CSRF，分别拒绝为 401 和 403；非法查询或请求数据通常返回 400，不支持的媒体类型返回 415。异常由统一处理器转换为错误信封；简历下载成功直接返回文件流。
-"""
+"""通知的 HTTP 入口，完整请求与字段契约见 backend/design_file/api.md。"""
 
 from apps.core.pagination import paginate
 from apps.core.responses import ok, page

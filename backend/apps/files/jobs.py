@@ -7,4 +7,4 @@ def cleanup_orphans():
     Raises:
         NotImplementedError: 任务编排尚未实现；底层 storage.cleanup_orphans 可独立调用。
     """
-    raise NotImplementedError("reserved for week 2")
+    raise NotImplementedError("reserved")

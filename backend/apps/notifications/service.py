@@ -1,6 +1,6 @@
 """在业务事务内创建站内通知。
 
-Sprint2 起业务事件只生成站内通知：不再创建 EmailLog(PENDING)，也不再挂接
+业务事件仅生成站内通知，不创建 EmailLog(PENDING) 或挂接
 邮件派发回调；`email_notify_enabled` 与 email_log 表保留为兼容数据，不控制发信。
 """
 from apps.core.tx import assert_in_atomic

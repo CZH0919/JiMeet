@@ -6,7 +6,7 @@ def list_announcements():
     """查询未删除的公告。
 
     Returns:
-        QuerySet[Announcement]: 按发布时间、主键倒序稳定排序（本轮 HTTP 不按置顶排序），
+        QuerySet[Announcement]: 按发布时间、主键倒序稳定排序（HTTP 不按置顶排序），
             预加载作者与关联招募。
     """
     return (

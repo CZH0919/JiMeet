@@ -53,7 +53,7 @@ class NotificationTypesTest(SimpleTestCase):
         with self.assertLogs("apps.notifications.mail", level="INFO"):
             mail.dispatch(1)
         for function in (mail.send_email_log, mail.retry_pending_emails):
-            with self.assertRaisesMessage(NotImplementedError, "reserved for week 2"):
+            with self.assertRaisesMessage(NotImplementedError, "reserved"):
                 function(1)
 
 
@@ -105,7 +105,7 @@ class NotifyTest(TxTestCase):
         self.assertEqual(EmailLog.objects.count(), 0)
 
     def test_no_email_log_or_dispatch_for_business_events(self):
-        """Sprint2 起业务事件不再创建邮件待发记录或派发回调。"""
+        """业务事件仅生成站内通知，不创建邮件待发记录或派发回调。"""
         with mock.patch("apps.notifications.mail.dispatch") as dispatch:
             with transaction.atomic():
                 notification = self._notify()

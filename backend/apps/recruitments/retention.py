@@ -12,4 +12,4 @@ def purge_expired_applications(recruitment_id: int, *, now: datetime | None = No
     Raises:
         NotImplementedError: 当前未实现物理清理，调用始终被拒绝。
     """
-    raise NotImplementedError("reserved for week 2")
+    raise NotImplementedError("reserved")

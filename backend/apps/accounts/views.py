@@ -1,7 +1,4 @@
-"""账号与开发会话的 HTTP 入口，完整请求与字段契约见 backend/design_file/api.md。
-
-需认证的入口先检查会话和 CSRF，分别拒绝为 401 和 403；非法查询或请求数据通常返回 400，不支持的媒体类型返回 415。异常由统一处理器转换为错误信封；简历下载成功直接返回文件流。
-"""
+"""账号与开发会话的 HTTP 入口，完整请求与字段契约见 backend/design_file/api.md。"""
 from collections.abc import Mapping
 
 from django.conf import settings
@@ -175,7 +172,7 @@ class DevLoginView(APIView):
     def post(self, request):
         """POST /api/v1/auth/dev-login：建立开发身份会话。
 
-        同一编号复用账号；新编号创建开发身份，不代表正式注册或学校 SSO 已实现。
+        同一编号复用账号；新编号创建开发身份，仅用于联调，不证明学校身份或邮箱归属。
 
         Args:
             request: JSON 必填 real_id，可选 name、email；匿名请求也必须提供匹配的 CSRF Cookie 与令牌。
