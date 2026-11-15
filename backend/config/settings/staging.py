@@ -4,6 +4,7 @@ from .base import *  # noqa: F401,F403
 from .base import _env_bool, _env_list
 
 DEBUG = False
+MIDDLEWARE = ['apps.core.staging_middleware.StagingSessionStatusMiddleware', *MIDDLEWARE]
 STAGING_LOGIN_ENABLED = True
 ALLOW_DEV_LOGIN = True
 STAGING_LOGIN_IDS = _env_list("STAGING_LOGIN_IDS")

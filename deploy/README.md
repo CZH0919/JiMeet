@@ -18,6 +18,12 @@ and `qaadmin`. Teachers have the T prefix. `qaadmin` is not an administrator
 unless explicitly seeded by the operator. DEBUG stays false. Production settings
 still disable development login. The backend listens only on 127.0.0.1:18081.
 
+In staging only, backend API 401 responses become 403 while preserving their JSON
+business error codes. Otherwise browsers can discard cached gateway Basic credentials
+when an application session is missing and repeatedly prompt for the gateway password.
+The frontend recognizes `UNAUTHENTICATED` independently of transport status. Production
+and local development keep their original 401 contract. Gateway failures still return 401.
+
 ## Automatic updates
 
 1. Merge into `staging`.

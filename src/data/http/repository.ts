@@ -69,7 +69,7 @@ export function createHttpRepository(): HttpRepositories {
           const data = await http.get<Record<string, unknown>>('/me');
           return mapUser(data);
         } catch (e) {
-          if (e instanceof ApiError && e.status === 401) return null;
+          if (e instanceof ApiError && (e.status === 401 || e.code === 'UNAUTHENTICATED')) return null;
           throw e;
         }
       },
