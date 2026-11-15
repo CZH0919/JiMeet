@@ -1,0 +1,8 @@
+[Unit]
+Description=Publish verified CZH0919/JiMeet staging commit
+After=network-online.target postgresql.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/jimeet-staging-deploy.py
+TimeoutStartSec=1800
+UMask=0022

@@ -1,0 +1,11 @@
+[Unit]
+Description=Nginx for JiMeet staging only
+After=network.target jimeet-staging.service
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/nginx -t -c /etc/nginx/jimeet-staging.conf
+ExecStart=/usr/sbin/nginx -c /etc/nginx/jimeet-staging.conf -g "daemon off;"
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=JiMeet isolated staging backend
+After=network.target postgresql.service
+[Service]
+User=jimeetstage
+Group=jimeetstage
+WorkingDirectory=/srv/jimeet-staging/current/backend
+EnvironmentFile=/etc/jimeet-staging/app.env
+ExecStart=/srv/jimeet-staging/current/.venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:18081 --workers 2 --timeout 60 --access-logfile - --error-logfile -
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/jimeet-staging/shared
+[Install]
+WantedBy=multi-user.target

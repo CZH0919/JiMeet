@@ -15,6 +15,7 @@ from rest_framework.views import APIView
 from apps.accounts.serializers import DevLoginSerializer, ProfileUpdateSerializer, profile_data
 from apps.accounts.services import give_privacy_consent, update_profile
 from apps.accounts.sso import DevSSOProvider
+from apps.accounts.login_policy import development_login_enabled
 from apps.core.errors import ErrorCode, NotFound
 from apps.core.responses import envelope, ok
 from apps.core.views import PrivateAPIView
@@ -63,12 +64,16 @@ class DevLoginView(APIView):
             BizError: 身份冲突返回 401 AUTH_FAILED，停用账号返回 403。
         """
         # 路由之外再次校验，避免运行期配置改变后入口仍可使用。
-        if not (settings.DEBUG and settings.ALLOW_DEV_LOGIN):
+        if not development_login_enabled():
             raise NotFound()
         # 匿名登录不会触发 SessionAuthentication 的默认 CSRF 检查，显式补上。
         SessionAuthentication().enforce_csrf(request)
         serializer = DevLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if getattr(settings, "STAGING_LOGIN_ENABLED", False):
+            if serializer.validated_data["real_id"] not in settings.STAGING_LOGIN_IDS:
+                from apps.core.errors import Forbidden
+                raise Forbidden("请使用团队分配的测试编号")
         identity = DevSSOProvider().exchange(serializer.validated_data)
         user = authenticate(request=request._request, identity=identity)
         login(request._request, user)

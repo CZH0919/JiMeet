@@ -3,6 +3,7 @@ from django.conf import settings
 from django.urls import path
 
 from apps.accounts import views
+from apps.accounts.login_policy import development_login_enabled
 
 urlpatterns = [
     path("auth/csrf", views.CsrfView.as_view(), name="auth-csrf"),
@@ -13,5 +14,5 @@ urlpatterns = [
     path("me/privacy-consent", views.PrivacyConsentView.as_view(), name="privacy-consent"),
 ]
 
-if settings.DEBUG and settings.ALLOW_DEV_LOGIN:
+if development_login_enabled():
     urlpatterns.append(path("auth/dev-login", views.DevLoginView.as_view(), name="auth-dev-login"))

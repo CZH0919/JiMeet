@@ -1,0 +1,8 @@
+[Unit]
+Description=Check for verified staging updates every two minutes
+[Timer]
+OnBootSec=120
+OnUnitInactiveSec=120
+Unit=jimeet-staging-deploy.service
+[Install]
+WantedBy=timers.target
