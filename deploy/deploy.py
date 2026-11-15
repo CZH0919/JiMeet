@@ -70,6 +70,11 @@ else:
         account=pwd.getpwnam(USER)
         os.chown(repo,account.pw_uid,account.pw_gid)
         app_run(['git','clone','--bare','https://github.com/'+REPO+'.git',str(repo)],ROOT,base_env)
+    probe=sp.run(['runuser','-u',USER,'--','git','-C',str(repo),'ls-remote','--exit-code',
+                  'origin','refs/heads/staging'],capture_output=True,text=True,env=base_env)
+    if probe.returncode==2:
+        print('Waiting for repository owner to publish the staging branch'); raise SystemExit(0)
+    probe.check_returncode()
     app_run(['git','fetch','origin','+refs/heads/staging:refs/heads/staging'],repo,base_env)
     sha=run(['runuser','-u',USER,'--','git','-C',str(repo),'rev-parse','refs/heads/staging'],
             capture_output=True,text=True,env=base_env).stdout.strip()
