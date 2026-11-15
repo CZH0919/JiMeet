@@ -57,7 +57,7 @@ args=parser.parse_args()
 lock=open('/run/lock/jimeet-staging-deploy.lock','w')
 try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
 except BlockingIOError: raise SystemExit('Another deployment is running')
-base_env={**os.environ,'PATH':NODE+':/usr/local/bin:/usr/bin:/bin','PYTHONDONTWRITEBYTECODE':'1',
+base_env={**os.environ,'PATH':NODE+':/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin','PYTHONDONTWRITEBYTECODE':'1',
           'HOME':'/var/lib/jimeet-stage','DEV_API_TARGET':'http://127.0.0.1:18081',
           'PIP_DISABLE_PIP_VERSION_CHECK':'1'}
 if args.archive:
@@ -90,7 +90,12 @@ run(['chown','-R',USER+':'+USER,str(release)])
 venv=release/'.venv'
 app_run(['/opt/python/3.12.15/bin/python3.12','-m','venv',str(venv)],release,base_env)
 python=str(venv/'bin/python')
-app_run([python,'-m','pip','install','-r','backend/requirements/staging.txt'],release,base_env)
+try:
+    app_run([python,'-m','pip','install','--no-index','--find-links','/opt/jimeet-staging/wheels',
+             '-r','backend/requirements/staging.txt'],release,base_env)
+except sp.CalledProcessError:
+    app_run([python,'-m','pip','install','--index-url','https://pypi.org/simple',
+             '--timeout','60','--retries','3','-r','backend/requirements/staging.txt'],release,base_env)
 app_run(['npm','ci','--no-audit','--no-fund'],release,base_env)
 app_run(['npm','run','build'],release,base_env)
 test_env={**base_env,**json.loads((CONF/'ci.json').read_text()),'DJANGO_SETTINGS_MODULE':'config.settings.staging_ci'}

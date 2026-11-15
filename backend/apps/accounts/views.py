@@ -41,7 +41,7 @@ class CsrfView(APIView):
 
 
 class DevLoginView(APIView):
-    """开发登录需同时满足配置开关与 CSRF 验证。"""
+    """开发登录需满足环境开关与 CSRF；独立测试环境还检查编号白名单。"""
 
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -58,7 +58,7 @@ class DevLoginView(APIView):
             Response: HTTP 200，data 为本人资料；建立 Session 并轮换 CSRF 令牌。
 
         Raises:
-            NotFound: DEBUG 或 ALLOW_DEV_LOGIN 未启用，返回 404。
+            NotFound: 当前环境不允许开发登录，返回 404。
             PermissionDenied: CSRF 校验失败，返回 403。
             ValidationError: 输入字段不合法，返回 400。
             BizError: 身份冲突返回 401 AUTH_FAILED，停用账号返回 403。

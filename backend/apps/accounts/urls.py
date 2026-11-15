@@ -1,5 +1,4 @@
-"""账号路由；开发登录仅在 DEBUG 与 ALLOW_DEV_LOGIN 同时启用时注册，接口契约见 api.md。"""
-from django.conf import settings
+"""账号路由；开发登录只供本地开发或受访问保护的独立测试环境使用。"""
 from django.urls import path
 
 from apps.accounts import views

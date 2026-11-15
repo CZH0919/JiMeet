@@ -35,6 +35,11 @@ in Actions. If the repository becomes private, configure a scoped read credentia
 Allow several minutes for CI, polling and deployment; GitHub API/network failures
 leave the existing site active and are retried at the next timer run.
 
+`cache_wheels.py` optionally warms the isolated wheel cache under
+`/opt/jimeet-staging/wheels`. Mirrors are accepted only when wheel SHA256 matches
+official PyPI metadata. Deployment tries that cache first and falls back to PyPI
+when requirements change. No member's virtual environment is reused or modified.
+
 ## Operations
 
 Services: `jimeet-staging`, `jimeet-staging-nginx`, `jimeet-staging-deploy.timer`.
