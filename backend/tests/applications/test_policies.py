@@ -37,7 +37,7 @@ class ApplicationPoliciesTest(SimpleTestCase):
                 (self.admin, "none", (False, False, False, False, False)),
                 (self.stranger, "none", (False, False, False, False, False)),
                 (self.anonymous, "none", (False, False, False, False, False)),
-                (self.applicant, "applicant", (True, True, False, not restricted, False)),
+                (self.applicant, "applicant", (True, True, False, True, False)),
                 (self.publisher, "publisher", (True, not restricted, True, not restricted, not restricted)),
             ):
                 with self.subTest(status=status, relation=relation):
@@ -49,8 +49,8 @@ class ApplicationPoliciesTest(SimpleTestCase):
         for user, relation in ((self.publisher, "publisher"), (self.applicant, "applicant")):
             access = resolve_application_access(user, self.app, self.r, self.now)
             self.assertEqual(access.relation, relation)
-            self.assertFalse(any((access.can_view, access.can_see_note, access.can_see_applicant_name,
-                                  access.can_download_resume, access.can_see_publisher_mark)))
+            self.assertTrue(access.can_view)
+            self.assertEqual(access.can_download_resume, relation == "applicant")
 
     def test_same_user_falls_back_to_publisher(self):
         self.app.applicant_id = self.publisher.pk
@@ -79,17 +79,17 @@ class ApplicationPoliciesTest(SimpleTestCase):
 
     def test_operation_permissions(self):
         for check in (can_modify_application, can_withdraw_application):
-            self.assertTrue(check(self.applicant, self.app, self.r))
-            self.assertFalse(check(self.admin, self.app, self.r))
+            self.assertTrue(check(self.applicant, self.app, self.r, self.now))
+            self.assertFalse(check(self.admin, self.app, self.r, self.now))
         self.assertTrue(can_process_application(self.publisher, self.app, self.r, self.now))
         self.assertFalse(can_process_application(self.admin, self.app, self.r, self.now))
         self.r.status = "closed"
         self.r.closed_at = self.now - timedelta(days=7)
         self.assertFalse(can_process_application(self.publisher, self.app, self.r, self.now))
-        self.assertTrue(can_modify_application(self.applicant, self.app, self.r))
+        self.assertFalse(can_modify_application(self.applicant, self.app, self.r, self.now))
         self.app.status = "accepted"
-        self.assertFalse(can_modify_application(self.applicant, self.app, self.r))
+        self.assertFalse(can_modify_application(self.applicant, self.app, self.r, self.now))
         self.assertFalse(can_process_application(self.publisher, self.app, self.r, self.now))
         self.app.status = "processing"
         self.r.deleted_at = self.now
-        self.assertFalse(can_withdraw_application(self.applicant, self.app, self.r))
+        self.assertFalse(can_withdraw_application(self.applicant, self.app, self.r, self.now))

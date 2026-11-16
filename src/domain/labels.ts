@@ -1,4 +1,11 @@
-import type { ApplicationStatus, JobStatus, JobType, NotificationType, UserRole } from './models';
+import type {
+  AnnouncementTimeKind,
+  ApplicationStatus,
+  JobStatus,
+  JobType,
+  NotificationType,
+  UserRole,
+} from './models';
 
 /** 枚举 → 中文展示文案的唯一真源，UI 层禁止硬编码枚举中文名 */
 
@@ -6,7 +13,6 @@ export const JOB_TYPE_LABEL: Record<JobType, string> = {
   competition: '竞赛组队',
   activity: '活动招聘',
   internship: '实验室实习',
-  competition_notice: '竞赛通知',
 };
 
 export const JOB_STATUS_LABEL: Record<JobStatus, string> = {
@@ -28,14 +34,13 @@ export const ROLE_LABEL: Record<UserRole, string> = {
   teacher: '教师',
 };
 
-export const MARK_ACTION_LABEL: Record<'accept' | 'hold' | 'reject', string> = {
-  accept: '确认',
-  hold: '暂留',
-  reject: '拒绝',
+export const TIME_KIND_LABEL: Record<AnnouncementTimeKind, string> = {
+  deadline: '报名截止',
+  event: '活动时间',
 };
 
 export const NOTIFICATION_TYPE_LABEL: Record<NotificationType, string> = {
-  application_submitted: '申请投递通知',
+  application_submitted: '收到新申请',
   application_accepted: '申请已接受',
   application_rejected: '申请已拒绝',
   application_withdrawn: '申请已撤回',
@@ -43,6 +48,7 @@ export const NOTIFICATION_TYPE_LABEL: Record<NotificationType, string> = {
   recruitment_closed: '招聘已关闭',
   recruitment_updated: '招聘信息已更新',
   recruitment_deleted: '招聘已删除',
+  announcement_admin_removed: '公告被下架',
   admin_removed: '内容被管理员删除',
 };
 
@@ -59,4 +65,11 @@ export const APPLICATION_STATUS_TONE: Record<ApplicationStatus, string> = {
   rejected: 'danger',
   withdrawn: 'muted',
   invalid: 'muted',
+};
+
+/** 招聘类型 → 语义色 token 名 */
+export const JOB_TYPE_TONE: Record<JobType, string> = {
+  competition: 'primary',
+  activity: 'success',
+  internship: 'warning',
 };

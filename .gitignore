@@ -1,12 +1,5 @@
 # 依赖
 node_modules/
-backend/.venv/
-__pycache__/
-*.py[cod]
-*$py.class
-
-# 运行时数据（上传的简历等，不提交）
-backend/var/
 
 # 构建产物
 dist/
@@ -32,3 +25,12 @@ Thumbs.db
 
 # 类型检查缓存
 *.tsbuildinfo
+
+# Python / Django
+__pycache__/
+*.py[cod]
+.venv/
+backend/var/
+
+# 本地构建/预览临时文件
+*.local.*

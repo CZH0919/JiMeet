@@ -1,5 +1,5 @@
 import { clsx } from 'clsx';
-import { CheckCircle2, Info, Inbox, XCircle } from 'lucide-react';
+import { Info, Inbox, XCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 export function Spinner({ className }: { className?: string }) {
@@ -24,23 +24,38 @@ export function PageLoader({ text = '加载中…' }: { text?: string }) {
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-24">
-      <XCircle className="h-10 w-10 text-danger" />
-      <p className="text-sm text-ink2">{message}</p>
+    <div className="flex flex-col items-center justify-center gap-3 py-20">
+      <span className="flex h-14 w-14 items-center justify-center rounded-full bg-danger-soft">
+        <XCircle className="h-7 w-7 text-danger" />
+      </span>
+      <p className="max-w-sm text-center text-sm leading-relaxed text-ink2">{message}</p>
       {onRetry && (
         <button className="text-sm font-medium text-primary hover:underline" onClick={onRetry}>
-          重试
+          重新加载
         </button>
       )}
     </div>
   );
 }
 
-export function EmptyState({ icon, title, action }: { icon?: ReactNode; title: string; action?: ReactNode }) {
+export function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+}: {
+  icon?: ReactNode;
+  title: string;
+  description?: string;
+  action?: ReactNode;
+}) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 py-20">
-      {icon ?? <Inbox className="h-12 w-12 text-muted" />}
-      <p className="text-sm text-muted">{title}</p>
+    <div className="flex flex-col items-center justify-center gap-3 py-16">
+      <span className="flex h-16 w-16 items-center justify-center rounded-full bg-muted-soft text-muted">
+        {icon ?? <Inbox className="h-7 w-7" />}
+      </span>
+      <p className="text-sm font-medium text-ink2">{title}</p>
+      {description && <p className="max-w-sm text-center text-xs leading-relaxed text-muted">{description}</p>}
       {action}
     </div>
   );
@@ -48,13 +63,9 @@ export function EmptyState({ icon, title, action }: { icon?: ReactNode; title: s
 
 export function InfoBanner({ children }: { children: ReactNode }) {
   return (
-    <div className="flex items-start gap-2 rounded-md bg-primary-soft px-4 py-3 text-sm text-primary">
+    <div className="flex items-start gap-2 rounded-md bg-primary-soft px-4 py-3 text-[13px] leading-relaxed text-primary">
       <Info className="mt-0.5 h-4 w-4 shrink-0" />
       <span>{children}</span>
     </div>
   );
-}
-
-export function SuccessMark() {
-  return <CheckCircle2 className="h-12 w-12 text-success" />;
 }

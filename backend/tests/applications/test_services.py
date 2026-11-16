@@ -139,13 +139,14 @@ class ApplicationServiceTest(TxTestCase):
             2,
         )
 
-    def test_withdraw_closes_resume_access_and_sends_one_publisher_notice(self):
+    def test_withdraw_keeps_owner_resume_and_sends_one_publisher_notice(self):
         self.run_action(self.applicant, "withdraw")
 
         self.app.refresh_from_db()
         self.assertEqual(self.app.status, ApplicationStatus.WITHDRAWN)
         access = resolve_application_access(self.applicant, self.app, self.r, self.now)
-        self.assertFalse(access.can_download_resume)
+        self.assertTrue(access.can_download_resume)
+        self.assertFalse(resolve_application_access(self.publisher, self.app, self.r, self.now).can_download_resume)
         self.assertEqual(
             list(Notification.objects.values_list("recipient_id", "type")),
             [(self.publisher.pk, APPLICATION_WITHDRAWN)],

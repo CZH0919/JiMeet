@@ -98,7 +98,7 @@ def project_recruitment(recruitment, now):
         Recruitment: 浅拷贝对象；已到期的 open 投影为 closed，原对象和数据库不变。
     """
     projected = copy(recruitment)
-    if projected.status == RecruitmentStatus.OPEN and now >= projected.deadline:
+    if projected.deleted_at is None and projected.status == RecruitmentStatus.OPEN and now >= projected.deadline:
         projected.status = RecruitmentStatus.CLOSED
         if projected.closed_at is None:
             projected.closed_at = projected.deadline
@@ -107,7 +107,7 @@ def project_recruitment(recruitment, now):
 
 
 def _effective_application_status(status, recruitment, now):
-    """计算关闭后七天边界上的申请展示状态。
+    """计算满员或关闭后七天边界上的申请展示状态。
 
     Args:
         status: 已保存的申请状态。
@@ -115,8 +115,12 @@ def _effective_application_status(status, recruitment, now):
         now: 判断状态的带时区时间。
 
     Returns:
-        str: 到达七天边界的 processing 显示为 rejected，其余保留原值。
+        str: 未删除招聘已满员或到达七天边界时 processing 显示为 rejected，其余保留原值。
     """
+    if recruitment.deleted_at is not None:
+        return status
+    if status == ApplicationStatus.PROCESSING and recruitment.status == RecruitmentStatus.FULL:
+        return ApplicationStatus.REJECTED
     end = rules.seven_day_deadline(recruitment)
     if status == ApplicationStatus.PROCESSING and end is not None and now >= end:
         return ApplicationStatus.REJECTED
@@ -151,20 +155,16 @@ def detail_context(recruitment, user, now) -> dict:
     Args:
         recruitment: 已完成时间投影的招募对象。
         user: 已认证当前用户。
-        now: 判断操作和留存窗口的时间点。
+        now: 判断操作窗口的时间点。
 
     Returns:
         dict: my_application、permissions；仅发布者另含 application_counts。
     """
-    expired = rules.is_retention_expired(recruitment, now)
-    latest = None
-    has_active = False
-    if not expired:
-        mine = Application.objects.filter(recruitment=recruitment, applicant=user)
-        latest = mine.order_by("-created_at", "-pk").values("id", "status").first()
-        has_active = mine.exclude(status=ApplicationStatus.WITHDRAWN).exists()
-        if latest is not None:
-            latest["status"] = _effective_application_status(latest["status"], recruitment, now)
+    mine = Application.objects.filter(recruitment=recruitment, applicant=user)
+    latest = mine.order_by("-created_at", "-pk").values("id", "status").first()
+    has_active = mine.exclude(status=ApplicationStatus.WITHDRAWN).exists()
+    if latest is not None:
+        latest["status"] = _effective_application_status(latest["status"], recruitment, now)
     try:
         can_submit_application(user, recruitment, now, has_active_application=has_active)
     except BizError as error:
@@ -180,7 +180,8 @@ def detail_context(recruitment, user, now) -> dict:
             "can_edit": policies.can_edit(user, recruitment, now),
             "can_close": policies.can_close(user, recruitment, now),
             "can_delete": policies.can_delete(user, recruitment, now),
-            "can_view_applications": owner and not expired,
+            "can_govern_delete": policies.can_govern_delete(user, recruitment),
+            "can_view_applications": owner,
         },
     }
     if owner:
