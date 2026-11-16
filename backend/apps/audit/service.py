@@ -7,11 +7,12 @@ def record(*, actor, action: str, target_type: str, target_id: int | None, reaso
     """
     保存操作者身份快照，原因最多保存 500 字。
 
-    只有 permission_denied 允许空操作者；admin_delete 必须给出非空原因。
+    只有 permission_denied 及受控管理命令动作（SYSTEM_MANAGED）允许空操作者；
+    admin_delete 必须给出非空原因。
     调用方不得在 reason 中传入认证凭证、简历内容、原始文件名或申请补充说明。
 
     Args:
-        actor: 操作者，若为 None 则仅允许 action 为 PERMISSION_DENIED
+        actor: 操作者，若为 None 则仅允许 action 属于 SYSTEM_MANAGED
         action: 审计动作，必须是 apps.audit.actions.ALL 中的值
         target_type: 审计对象类型，非空字符串，如 recruitment / application / request
         target_id: 审计对象 ID，可为 None
@@ -29,7 +30,7 @@ def record(*, actor, action: str, target_type: str, target_id: int | None, reaso
         raise ValueError("target_type 必填")
     if action == actions.ADMIN_DELETE and not (reason and reason.strip()):
         raise ValueError("管理员删除必须填写原因")
-    if actor is None and action != actions.PERMISSION_DENIED:
+    if actor is None and action not in actions.SYSTEM_MANAGED:
         raise ValueError("业务审计必须提供操作者")
     return AuditLog.objects.create(
         actor=actor,

@@ -20,7 +20,7 @@ class Command(BaseCommand):
     help = "补执行到期招聘的关闭及七天自动拒绝"
 
     def handle(self, *args, **options):
-        """按固定本轮时间逐个补执行到期状态。
+        """按固定时间快照逐个补执行到期和满员状态。
 
         每个招募独立事务，单项失败记录日志后继续；已删除招募及无需补处理的关闭招募不参与。
 
@@ -41,6 +41,7 @@ class Command(BaseCommand):
         ).filter(
             Q(status=RecruitmentStatus.OPEN, deadline__lte=now)
             | Q(status=RecruitmentStatus.CLOSED, closed_at__lte=now - timedelta(days=7), has_processing=True)
+            | Q(status=RecruitmentStatus.FULL, has_processing=True)
         ).order_by("pk").values_list("pk", flat=True)
         processed = failed = closed = rejected = 0
         for recruitment_id in candidates.iterator(chunk_size=200):

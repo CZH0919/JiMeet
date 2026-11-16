@@ -186,7 +186,7 @@ def cleanup_orphans(*, older_than: timedelta = timedelta(hours=24),
                     referenced: Callable[[list[str]], set[str]]) -> CleanupReport:
     """分批删除超过年龄门槛且未被业务引用的简历。
 
-    删除前再次核对修改时间；引用查询回调的异常向上传播。该工具已实现，周期任务编排入口仍预留。
+    删除前再次核对修改时间；引用查询回调的异常向上传播。周期任务编排入口为预留能力。
 
     Args:
         older_than: 按修改时间计算的年龄门槛，默认 24 小时，不能短于 24 小时。

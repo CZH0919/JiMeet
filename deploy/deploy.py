@@ -71,7 +71,7 @@ else:
         os.chown(repo,account.pw_uid,account.pw_gid)
         app_run(['git','clone','--bare','https://github.com/'+REPO+'.git',str(repo)],ROOT,base_env)
     probe=sp.run(['runuser','-u',USER,'--','git','-C',str(repo),'ls-remote','--exit-code',
-                  'origin','refs/heads/staging'],capture_output=True,text=True,env=base_env)
+                  'origin','refs/heads/staging'],capture_output=True,text=True,env=base_env,timeout=45)
     if probe.returncode==2:
         print('Waiting for repository owner to publish the staging branch'); raise SystemExit(0)
     probe.check_returncode()
@@ -111,19 +111,20 @@ for line in (CONF/'app.env').read_text().splitlines():
     key,value=line.split('=',1); env[key]=value
 if env['DB_NAME']!='jimeet_staging' or env['DB_USER']!='jimeet_staging':
     raise SystemExit('Refusing non-staging database')
-backup=ROOT/'backups'/(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'.dump')
-run(['pg_dump','-h','127.0.0.1','-U','jimeet_staging','-d','jimeet_staging','-Fc','-f',str(backup)],
-    env={**base_env,'PGPASSWORD':env['DB_PASSWORD']})
-backup.chmod(0o600)
 app_run([python,'manage.py','check'],release/'backend',env)
-app_run([python,'manage.py','migrate','--noinput'],release/'backend',env)
-app_run([python,'manage.py','seed_tags'],release/'backend',env)
 version={'commit':sha,'deployed_at':datetime.now(timezone.utc).isoformat(),'branch':'staging','repository':REPO}
 (release/'dist/version.json').write_text(json.dumps(version))
 old=(ROOT/'current').resolve() if (ROOT/'current').is_symlink() else None
 run(['systemctl','stop','jimeet-staging.service'])
-switch(release)
 try:
+    # Pause only this backend while backing up and migrating its own database.
+    backup=ROOT/'backups'/(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'.dump')
+    run(['pg_dump','-h','127.0.0.1','-U','jimeet_staging','-d','jimeet_staging','-Fc','-f',str(backup)],
+        env={**base_env,'PGPASSWORD':env['DB_PASSWORD']})
+    backup.chmod(0o600)
+    app_run([python,'manage.py','migrate','--noinput'],release/'backend',env)
+    app_run([python,'manage.py','seed_tags'],release/'backend',env)
+    switch(release)
     run(['systemctl','start','jimeet-staging.service'])
     if not healthy(): raise RuntimeError('New backend health check failed')
 except Exception:

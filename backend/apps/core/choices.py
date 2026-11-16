@@ -55,3 +55,9 @@ class EmailStatus(models.TextChoices):
     PENDING = "pending", "待发送"
     SENT = "sent", "已发送"
     FAILED = "failed", "发送失败"
+
+
+class AnnouncementTimeKind(models.TextChoices):
+    """公告时间类型枚举：报名截止时间或活动时间。"""
+    DEADLINE = "deadline", "报名截止时间"
+    EVENT = "event", "活动时间"

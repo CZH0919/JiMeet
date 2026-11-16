@@ -1,4 +1,6 @@
 import type {
+  Announcement,
+  AnnouncementTimeKind,
   Application,
   ApplicationStatus,
   Job,
@@ -7,6 +9,8 @@ import type {
   Notification,
   NotificationType,
   Page,
+  PublicUser,
+  ResumeFile,
   Tag,
   User,
   UserRole,
@@ -25,7 +29,7 @@ function mapRole(v: unknown): UserRole {
   return v === 'teacher' ? 'teacher' : 'student';
 }
 
-function mapPublicUser(v: Json | undefined): Job['publisher'] {
+function mapPublicUser(v: Json | undefined): PublicUser {
   return {
     id: str(v?.uid),
     name: str(v?.nickname ?? v?.name ?? '未知用户'),
@@ -59,6 +63,10 @@ function mapApplicationStatus(v: unknown): ApplicationStatus {
   }
 }
 
+function mapTimeKind(v: unknown): AnnouncementTimeKind {
+  return v === 'event' ? 'event' : 'deadline';
+}
+
 function mapTags(v: unknown): Tag[] {
   if (!Array.isArray(v)) return [];
   return v.map((t) => ({ id: Number((t as Json)?.id ?? 0), name: str((t as Json)?.name) }));
@@ -81,6 +89,7 @@ export function mapUser(raw: Json): User {
     isAdmin: raw.is_admin === true,
     email: raw.email == null ? undefined : str(raw.email),
     privacyConsented: raw.privacy_consented === true,
+    emailNotifyEnabled: raw.email_notify_enabled === true,
   };
 }
 
@@ -113,8 +122,9 @@ export function mapRecruitmentDetail(raw: Json): Job {
   const counts = raw.application_counts as Json | undefined;
   let applicationCount = 0;
   if (counts) {
-    for (const k of Object.keys(counts)) applicationCount += Number((counts as Json)[k] ?? 0);
+    for (const k of Object.keys(counts)) applicationCount += Number(counts[k] ?? 0);
   }
+  const blocked = permissions?.apply_blocked_reason ? str(permissions.apply_blocked_reason) : null;
   return {
     ...summary,
     description: str(raw.description),
@@ -125,13 +135,10 @@ export function mapRecruitmentDetail(raw: Json): Job {
       canEdit: permissions?.can_edit === true,
       canClose: permissions?.can_close === true,
       canDelete: permissions?.can_delete === true,
+      canGovernDelete: permissions?.can_govern_delete === true,
       canViewApplications: permissions?.can_view_applications === true,
-      applyBlockedReason: permissions?.apply_blocked_reason
-        ? describeCode(str(permissions.apply_blocked_reason))
-        : null,
-      applyBlockedCode: permissions?.apply_blocked_reason
-        ? str(permissions.apply_blocked_reason)
-        : null,
+      applyBlockedReason: blocked ? describeCode(blocked) : null,
+      applyBlockedCode: blocked,
     },
   };
 }
@@ -141,29 +148,55 @@ export function mapApplication(raw: Json): Application {
   const applicant = raw.applicant as Json | undefined;
   const resume = raw.resume as Json | null | undefined;
   const permissions = raw.permissions as Json | undefined;
+  const mappedResume: ResumeFile | null = resume
+    ? { fileName: str(resume.name), size: Number(resume.size ?? 0), type: str(resume.type) }
+    : null;
   return {
     id: str(raw.id),
     jobId: str(recruitment?.id),
     jobTitle: str(recruitment?.title),
     jobType: mapJobType(recruitment?.type),
+    jobDeleted: recruitment?.is_deleted === true,
     applicant: {
       id: str(applicant?.uid),
+      // 发布者可见 applicant.name（后端按业务关系裁剪），申请人自己是 nickname
       name: str(applicant?.name ?? applicant?.nickname ?? '未知用户'),
       role: mapRole(applicant?.role),
     },
-    resume: resume
-      ? { fileName: str(resume.name), size: Number(resume.size ?? 0), type: str(resume.type) }
-      : null,
+    resume: mappedResume,
     note: raw.note == null ? undefined : str(raw.note),
     status: mapApplicationStatus(raw.status),
     createdAt: str(raw.created_at),
     updatedAt: str(raw.updated_at),
+    decidedAt: raw.decided_at == null ? null : str(raw.decided_at),
     publisherMark: raw.publisher_mark === 'hold' ? 'hold' : 'none',
     modified: raw.has_unseen_update === true,
     canModify: permissions?.can_modify === true,
     canWithdraw: permissions?.can_withdraw === true,
     canProcess: permissions?.can_process === true,
     canDownloadResume: permissions?.can_download_resume === true,
+  };
+}
+
+export function mapAnnouncement(raw: Json): Announcement {
+  const permissions = raw.permissions as Json | undefined;
+  return {
+    id: str(raw.id),
+    title: str(raw.title),
+    content: str(raw.content),
+    timeKind: mapTimeKind(raw.time_kind),
+    eventAt: str(raw.event_at),
+    linkUrl: raw.link_url == null || raw.link_url === '' ? null : str(raw.link_url),
+    recruitmentId: raw.recruitment_id == null ? null : str(raw.recruitment_id),
+    recruitmentAvailable: raw.recruitment_available === true,
+    author: mapPublicUser(raw.author as Json | undefined),
+    createdAt: str(raw.created_at),
+    updatedAt: str(raw.updated_at),
+    permissions: {
+      canEdit: permissions?.can_edit === true,
+      canDelete: permissions?.can_delete === true,
+      canGovernDelete: permissions?.can_govern_delete === true,
+    },
   };
 }
 
@@ -176,6 +209,7 @@ const NOTIFICATION_TYPES: Record<string, NotificationType> = {
   recruitment_closed: 'recruitment_closed',
   recruitment_updated: 'recruitment_updated',
   recruitment_deleted: 'recruitment_deleted',
+  announcement_admin_removed: 'announcement_admin_removed',
   admin_removed: 'admin_removed',
 };
 
@@ -188,6 +222,8 @@ export function mapNotification(raw: Json): Notification {
     body: str(raw.content),
     jobId: raw.recruitment_id == null ? undefined : str(raw.recruitment_id),
     applicationId: raw.application_id == null ? undefined : str(raw.application_id),
+    announcementId: raw.announcement_id == null ? undefined : str(raw.announcement_id),
+    targetIsDeleted: raw.target_is_deleted === true,
     createdAt: str(raw.created_at),
     read: raw.is_read === true,
   };
@@ -204,6 +240,11 @@ export function mapRecruitmentPage(data: Json): Page<Job> {
 
 export function mapApplicationPage(data: Json): Page<Application> {
   const items = Array.isArray(data.items) ? data.items.map((r) => mapApplication(r as Json)) : [];
+  return mapPage(items, data);
+}
+
+export function mapAnnouncementPage(data: Json): Page<Announcement> {
+  const items = Array.isArray(data.items) ? data.items.map((r) => mapAnnouncement(r as Json)) : [];
   return mapPage(items, data);
 }
 

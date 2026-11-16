@@ -12,6 +12,13 @@ export default defineConfig(({ mode }) => {
     throw new Error('请先在 .env 中配置 DEV_API_TARGET 为后端服务的 origin（如 http://127.0.0.1:8000）');
   }
 
+  const proxy = {
+    '/api/v1': {
+      target,
+      changeOrigin: false,
+    },
+  };
+
   return {
     plugins: [react()],
     resolve: {
@@ -20,12 +27,13 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       strictPort: true,
-      proxy: {
-        '/api/v1': {
-          target,
-          changeOrigin: false,
-        },
-      },
+      proxy,
+    },
+    // `vite preview` 用于本地核对生产构建，沿用同一代理配置
+    preview: {
+      port: 4173,
+      strictPort: true,
+      proxy,
     },
   };
 });

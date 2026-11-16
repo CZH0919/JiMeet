@@ -16,5 +16,5 @@ class ReservedCommandsTest(SimpleTestCase):
 
     def test_reserved_functions(self):
         for function in (lambda: purge_expired_applications(1), cleanup_orphans):
-            with self.assertRaisesMessage(NotImplementedError, "reserved for week 2"):
+            with self.assertRaisesMessage(NotImplementedError, "reserved"):
                 function()

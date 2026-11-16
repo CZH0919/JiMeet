@@ -54,11 +54,24 @@ def can_delete(user, r, now) -> bool:
         now: 带时区的业务时间。
 
     Returns:
-        bool: 未删除对象的管理员，或仍在编辑窗口内的发布者可删除。
+        bool: 仅处于编辑窗口内的发布者可删除，管理员标记不绕过本人操作限制。
     """
     if not user or not user.is_authenticated or r.deleted_at is not None:
         return False
-    return bool(user.is_admin or (_is_publisher(user, r) and rules.is_publisher_deletable(r, now)))
+    return _is_publisher(user, r) and rules.is_publisher_deletable(r, now)
+
+
+def can_govern_delete(user, r) -> bool:
+    """判断治理删除入口是否可展示；服务层仍须重新读取管理员权限。
+
+    Args:
+        user: 当前用户。
+        r: 目标招聘。
+
+    Returns:
+        bool: 已认证管理员且招聘未删除时为 True。
+    """
+    return bool(user and user.is_authenticated and user.is_admin and r.deleted_at is None)
 
 
 def can_view_applications(user, r) -> bool:
@@ -69,7 +82,7 @@ def can_view_applications(user, r) -> bool:
         r: 招募对象。
 
     Returns:
-        bool: 仅已认证发布者为 True；留存期限由调用方另行校验。
+        bool: 仅已认证发布者为 True，不因固定留存期限隐藏历史申请。
     """
     return _is_publisher(user, r)
 

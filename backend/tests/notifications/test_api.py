@@ -75,7 +75,7 @@ class NotificationAPITest(TxTestCase):
             Notification.objects.filter(recipient=self.applicant, is_read=False).count(), 0,
         )
 
-    def test_expired_linked_notifications_are_hidden_from_all_reads(self):
+    def test_historical_linked_notifications_remain_visible(self):
         self.r.full_at = self.now - timedelta(days=180)
         self.r.status = RecruitmentStatus.FULL
         self.r.save(update_fields=["full_at", "status"])
@@ -87,11 +87,11 @@ class NotificationAPITest(TxTestCase):
         single = self.client.post(
             f"/api/v1/notifications/{self.notification.pk}/read", {}, format="json",
         )
-        self.assertEqual([item["id"] for item in listing.data["data"]["items"]], [independent.pk])
+        self.assertEqual([item["id"] for item in listing.data["data"]["items"]], [independent.pk, self.notification.pk])
         self.assertIsNone(listing.data["data"]["items"][0]["application_id"])
         self.assertIsNone(listing.data["data"]["items"][0]["recruitment_id"])
-        self.assertEqual(count.data["data"], {"unread_count": 1})
-        self.assertEqual(single.status_code, 404)
+        self.assertEqual(count.data["data"], {"unread_count": 2})
+        self.assertEqual(single.status_code, 200)
 
     def test_unknown_fields_and_empty_body_contract(self):
         self.login_as(self.applicant)

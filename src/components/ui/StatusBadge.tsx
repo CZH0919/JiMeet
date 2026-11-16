@@ -12,7 +12,7 @@ const toneClass: Record<string, string> = {
   success: 'bg-success-soft text-success',
   warning: 'bg-warning-soft text-warning',
   danger: 'bg-danger-soft text-danger',
-  muted: 'bg-muted-soft text-muted',
+  muted: 'bg-muted-soft text-ink2',
 };
 
 export function JobStatusBadge({ status }: { status: JobStatus }) {

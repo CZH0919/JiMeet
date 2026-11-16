@@ -15,7 +15,7 @@ class Recruitment(models.Model):
     - `publisher`: 发布者，删除用户时受 PROTECT 保护
     - `title` / `type` / `description`: 招聘名称、类型和需求描述
     - `min_headcount` / `max_headcount`: 展示人数下限与实际接受人数上限
-    - `accepted_count`: 历史累计接受人数，删除或清理申请时不递减
+    - `accepted_count`: 当前已接受人数，招聘删除后归零；历史结果由状态变更记录追溯
     - `status` / `deadline`: 当前状态与投递截止时间
     - `closed_at` / `close_reason`: 首次关闭时间及原因，必须同时存在或为空
     - `full_at` / `deleted_at`: 首次满员时间与软删除时间
@@ -24,7 +24,7 @@ class Recruitment(models.Model):
     - `tags`: 通过 RecruitmentTag 关联的领域标签
     - `created_at` / `updated_at`: 发布时间与最近修改时间
 
-    数据库保证人数范围及状态与时间的对应关系；截止时间和人数 50 上限
+    数据库保证人数范围及状态与时间的对应关系；截止时间和人数 200 上限
     由应用层校验，状态流转由业务服务在招募行锁内执行。
     """
 
@@ -37,7 +37,7 @@ class Recruitment(models.Model):
     description = models.TextField("需求描述")
     min_headcount = models.IntegerField("人数下限", null=True, blank=True)
     max_headcount = models.IntegerField("人数上限")
-    accepted_count = models.IntegerField("累计接受人数", default=0, db_default=0)
+    accepted_count = models.IntegerField("已接受人数", default=0, db_default=0)
     status = models.CharField(
         "状态", max_length=16, choices=RecruitmentStatus.choices,
         default=RecruitmentStatus.OPEN, db_default=RecruitmentStatus.OPEN,
@@ -62,6 +62,10 @@ class Recruitment(models.Model):
         verbose_name = "招聘"
         verbose_name_plural = "招聘"
         constraints = [
+            models.CheckConstraint(
+                condition=Q(deleted_at__isnull=True) | Q(accepted_count=0),
+                name="recruitment_deleted_count_chk",
+            ),
             models.CheckConstraint(
                 condition=Q(type__in=RecruitmentType.values),
                 name="recruitment_type_chk",

@@ -1,6 +1,7 @@
 /**
  * 后端 HTTP 客户端：统一 `/api/v1` 前缀、JSON 信封、CSRF 会话流程。
  * 前端通过 Vite 开发代理转发到后端，不在页面硬编码后端地址（见 vite.config.ts）。
+ * 契约见 `backend/design_file/api.md` §2、§3。
  */
 
 const API_BASE = '/api/v1';
@@ -9,10 +10,6 @@ let csrfToken: string | null = null;
 
 export function setCsrfToken(token: string | null) {
   csrfToken = token;
-}
-
-export function getCsrfToken(): string | null {
-  return csrfToken;
 }
 
 export class ApiError extends Error {
@@ -30,22 +27,23 @@ export class ApiError extends Error {
   }
 }
 
-/** 后端错误码 → 中文文案（后端 message 为空或英文时兜底；用于展示，不作为判断依据） */
+/** 后端错误码 → 中文文案（用于展示，不作为判断依据） */
 const CODE_MESSAGES: Record<string, string> = {
-  UNAUTHENTICATED: '登录状态失效，请重新登录',
-  AUTH_FAILED: '登录失败：编号或身份不合法',
+  UNAUTHENTICATED: '登录状态已失效，请重新登录',
+  AUTH_FAILED: '邮箱或密码不正确',
   FORBIDDEN: '无权执行该操作',
   NOT_FOUND: '资源不存在或已被删除',
   VALIDATION_ERROR: '参数校验失败',
   METHOD_NOT_ALLOWED: '请求方法不允许',
+  RATE_LIMITED: '尝试次数过多，请稍后再试',
   PRIVACY_NOT_CONSENTED: '请先确认个人信息处理告知',
-  SELF_APPLICATION_FORBIDDEN: '不能申请本人发布的招募',
+  SELF_APPLICATION_FORBIDDEN: '不能申请本人发布的招聘',
   RECRUITMENT_NOT_OPEN: '当前不允许新投递',
   RECRUITMENT_NOT_EDITABLE: '当前不允许编辑、关闭或删除',
   RECRUITMENT_FULL: '已满员，不能再接受申请',
   PROCESSING_WINDOW_CLOSED: '处理窗口已关闭',
   HEADCOUNT_BELOW_ACCEPTED: '人数上限低于已接受人数',
-  DUPLICATE_APPLICATION: '你已申请过该招募',
+  DUPLICATE_APPLICATION: '你已申请过该招聘',
   APPLICATION_NOT_PROCESSING: '该申请已不是处理中',
   INVALID_RESUME_FILE: '简历文件校验失败',
   INTERNAL_ERROR: '服务暂时不可用，请稍后重试',
@@ -59,9 +57,9 @@ export function describeCode(code: string): string {
 function describeError(code: string, message: string, details?: unknown): string {
   let text = message && message.trim() ? message.trim() : describeCode(code);
   if (details && typeof details === 'object' && !Array.isArray(details)) {
-    const parts = Object.entries(details as Record<string, unknown>).map(([k, v]) => {
+    const parts = Object.values(details as Record<string, unknown>).map((v) => {
       const val = Array.isArray(v) ? v.join('；') : String(v);
-      return `${k}: ${val}`;
+      return `${val}`;
     });
     if (parts.length > 0) text = `${text}（${parts.join('；')}）`;
   }
@@ -72,7 +70,7 @@ interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   json?: unknown;
   formData?: FormData;
-  query?: Record<string, string | number | undefined>;
+  query?: Record<string, string | number | boolean | undefined>;
 }
 
 function buildUrl(path: string, query?: RequestOptions['query']): string {
@@ -106,7 +104,7 @@ async function parseError(response: Response): Promise<ApiError> {
   return new ApiError(code, describeError(code, message, details), response.status, details, requestId);
 }
 
-/** 发起 JSON 请求，返回成功信封的 data 字段 */
+/** 发起请求，返回成功信封的 data 字段 */
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', json, formData, query } = opts;
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -132,11 +130,19 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
   const ct = response.headers.get('Content-Type') ?? '';
   if (!ct.includes('application/json')) {
-    throw new ApiError('HTTP', `非 JSON 响应：HTTP ${response.status}`, response.status);
+    const hint =
+      response.status === 404
+        ? '接口不存在（HTTP 404），请确认后端版本与代理配置'
+        : `服务返回了非 JSON 响应（HTTP ${response.status}）`;
+    throw new ApiError('HTTP', hint, response.status);
   }
 
   const payload = await response.json();
   if (!response.ok || payload.code !== 'OK') {
+    // 会话失效时通知应用层清理登录态（页头与路由守卫会随之回到未登录视图）
+    if ((response.status === 401 || payload.code === 'UNAUTHENTICATED') && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('jiyu:unauthenticated'));
+    }
     throw new ApiError(
       payload.code ?? 'INTERNAL_ERROR',
       describeError(payload.code, payload.message ?? '', payload.data?.details),
@@ -169,14 +175,15 @@ export const http = {
   },
 };
 
-/** 获取 CSRF 令牌（同时接收 csrftoken Cookie） */
-export async function fetchCsrf(): Promise<void> {
+/** 获取 CSRF 令牌（同时接收 csrftoken Cookie）。登录/注册成功后需再次调用刷新令牌。 */
+export async function fetchCsrf(): Promise<string> {
   const data = await http.get<{ csrf_token: string }>('/auth/csrf');
   setCsrfToken(data.csrf_token);
+  return data.csrf_token;
 }
 
-/** 浏览器触发文件下载（GET，无需 CSRF），失败抛 ApiError */
-export async function downloadResume(applicationId: string): Promise<void> {
+/** 浏览器触发简历下载（GET，无需 CSRF），失败抛 ApiError */
+export async function downloadResumeFile(applicationId: string): Promise<void> {
   const url = `${API_BASE}/applications/${applicationId}/resume`;
   const response = await fetch(url, { method: 'GET', credentials: 'same-origin' });
   if (!response.ok) {
@@ -185,7 +192,14 @@ export async function downloadResume(applicationId: string): Promise<void> {
   const blob = await response.blob();
   const cd = response.headers.get('Content-Disposition') ?? '';
   const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
-  const filename = m ? decodeURIComponent(m[1]) : `简历-${applicationId}`;
+  let filename = `简历-${applicationId}`;
+  if (m) {
+    try {
+      filename = decodeURIComponent(m[1]);
+    } catch {
+      filename = m[1];
+    }
+  }
   const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = objectUrl;

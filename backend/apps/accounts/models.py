@@ -113,12 +113,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     - `uid` / `real_id`: 对外随机标识（uuid4().hex，32 位）与内部学号/工号，
       均唯一，real_id 不对外公开
     - `nickname` / `name`: 可自定义的昵称与真实姓名
-    - `email`: 同济邮箱，按小写唯一，用于登录预留与邮件通知
+    - `email`: 同济邮箱，按小写唯一，用于邮箱密码登录；后缀校验不代表邮箱归属已核验
     - `role`: 用户角色，只能是 student 或 teacher
     - `is_admin` / `is_active`: 业务管理员标记与账号是否启用，业务权限只看 is_admin
     - `password` / `sso_subject`: Django 哈希密码与统一身份认证稳定标识，
       数据库要求 password 非空或 sso_subject 非空，不保证存在可用的密码认证方式
-    - `email_notify_enabled`: 是否接收邮件通知，站内通知始终生成
+    - `email_notify_enabled`: 保留的邮件偏好兼容字段，当前不触发邮件发送
     - `privacy_consented_at`: 确认个人信息处理告知的时间，为空时不允许提交申请
     - `is_staff` / `is_superuser` / `groups` / `user_permissions`: 仅 Django Admin
       访问权限，不代表业务权限
@@ -173,3 +173,30 @@ class User(AbstractBaseUser, PermissionsMixin):
             str: User(主键)。
         """
         return f"User({self.pk})"
+
+
+class AuthFailure(models.Model):
+    """
+    注册/登录失败计数记录，对应 database.md 4.2 的 auth_failure 表。
+
+    ### Attributes
+    - `key_hash`: 限流键的 SHA-256 摘要（邮箱或来源 IP），不保存明文
+    - `kind`: 失败发生的操作，login 或 register
+    - `created_at`: 失败发生时间；窗口计数与惰性清理按该时间过滤
+
+    采用插入即计数（INSERT-only），并发失败不会互相覆盖或丢失。
+    """
+
+    key_hash = models.CharField("键摘要", max_length=64)
+    kind = models.CharField("操作类型", max_length=16)
+    created_at = models.DateTimeField("失败时间", db_default=Now())
+
+    class Meta:
+        db_table = "auth_failure"
+        indexes = [
+            models.Index(fields=["key_hash", "created_at"], name="auth_failure_key_idx"),
+        ]
+
+    def __str__(self) -> str:
+        """返回仅含数据库主键的标识，不输出键摘要。"""
+        return f"AuthFailure({self.pk})"
