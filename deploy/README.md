@@ -13,10 +13,20 @@ the server in `/etc/jimeet-staging/access.json` (root only); do not commit them.
 Only synthetic test data is appropriate for this initial HTTP deployment.
 After adding HTTPS, update the trusted origin and `STAGING_HTTPS=true`.
 
-Inside the website, allowed test identities are `qa01` to `qa06`, `Tqa01`, `Tqa02`
-and `qaadmin`. Teachers have the T prefix. `qaadmin` is not an administrator
-unless explicitly seeded by the operator. DEBUG stays false. Production settings
-still disable development login. The backend listens only on 127.0.0.1:18081.
+Inside the website, the Sprint 2 UI uses account/password login. Existing test
+identities are `qa01` to `qa06`, `Tqa01`, `Tqa02` and `qaadmin`. Their generated
+passwords are stored in `/etc/jimeet-staging/test-accounts.json` (root only),
+separately from the browser's gateway credentials. The account field accepts the
+short identity; the frontend appends `@tongji.edu.cn`. Teachers have the T prefix.
+`qaadmin` has the business administrator flag only because it was explicitly seeded.
+DEBUG stays false. The staging development-login endpoint remains restricted to
+the allowlist; production settings disable it. The backend listens only on
+127.0.0.1:18081.
+
+`init_staging_passwords.py` initializes only existing allowlisted test users with
+unusable passwords; it refuses to replace a different usable password. Run it
+with the staging environment and credentials JSON on stdin, never as part of
+every deployment. Do not commit either credentials file.
 
 In staging only, backend API 401 responses become 403 while preserving their JSON
 business error codes. Otherwise browsers can discard cached gateway Basic credentials
@@ -69,3 +79,12 @@ reviewed staging artifacts. Concurrent deployments are blocked by a server lock.
 
 Protect `staging` with PR reviews and required `Staging checks` status where your
 repository permissions/plan allow. Deploy code only from trusted team members.
+
+## Verification
+
+Run `python deploy/smoke_http.py <gateway-json> http://121.36.228.209 <accounts-json>`
+from a trusted operator machine. This creates marked synthetic recruitment,
+application and announcement records and checks password login, CSRF, resume
+access and administrator-only announcement publishing. Keep credentials outside
+the repository. `snapshot_staging.py` can capture existing record identifiers,
+statuses and private-file hashes before a migration and compare them afterward.

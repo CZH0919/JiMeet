@@ -11,6 +11,8 @@ import requests
 
 credentials=json.loads(Path(sys.argv[1]).read_text())
 base=sys.argv[2].rstrip('/')
+accounts = ({a['account']: a for a in json.loads(Path(sys.argv[3]).read_text())['accounts']}
+            if len(sys.argv) > 3 else {})
 checks=[]
 
 def session():
@@ -31,7 +33,11 @@ def call(s, method, path, expected=200, **kwargs):
 def login(real_id):
     s=session()
     call(s,'GET','/api/v1/auth/csrf')
-    call(s,'POST','/api/v1/auth/dev-login',json={'real_id':real_id})
+    if accounts:
+        account=accounts[real_id]
+        call(s,'POST','/api/v1/auth/login',json={'email':account['email'],'password':account['password']})
+    else:
+        call(s,'POST','/api/v1/auth/dev-login',json={'real_id':real_id})
     call(s,'GET','/api/v1/me')
     return s
 
@@ -53,7 +59,7 @@ tags=call(publisher,'GET','/api/v1/tags').json()['data']['items']
 stamp=datetime.now(timezone.utc).strftime('%m%d-%H%M%S')
 payload={'title':'部署验证-'+stamp,'type':'competition',
          'description':'仅用于测试站部署验证的模拟招募，不对应真实活动。',
-         'tag_ids':[tags[0]['id']], 'max_headcount':3,
+         'tag_ids':[tags[0]['id']], 'min_headcount':1, 'max_headcount':3,
          'deadline':(datetime.now(timezone.utc)+timedelta(days=14)).isoformat()}
 recruitment=call(publisher,'POST','/api/v1/recruitments',201,json=payload).json()['data']
 rid=recruitment['id']
@@ -69,4 +75,14 @@ accepted=call(publisher,'POST',f'/api/v1/applications/{aid}/accept',json={}).jso
 assert accepted['status']=='accepted'
 call(applicant,'GET','/api/v1/notifications')
 call(publisher,'GET','/api/v1/recruitments')
+if accounts:
+    admin=login('qaadmin')
+    teacher=login('Tqa01')
+    announcement_payload={'title':'新版部署验证公告-'+stamp,
+        'content':'这是一条测试站模拟公告，用于验证新版首页与公告接口。',
+        'time_kind':'event','event_at':payload['deadline'],'link_url':None,'recruitment_id':rid}
+    call(applicant,'POST','/api/v1/announcements',403,json=announcement_payload)
+    announcement=call(admin,'POST','/api/v1/announcements',201,json=announcement_payload).json()['data']
+    call(applicant,'GET',f"/api/v1/announcements/{announcement['id']}")
+    call(applicant,'GET','/api/v1/announcements')
 print(json.dumps({'version':version,'checks':checks,'recruitment_id':rid,'application_id':aid},ensure_ascii=False,indent=2))
