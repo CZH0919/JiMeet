@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { Job } from '@/domain/models';
 import { repo } from '@/data';
-import { validateNote } from '@/domain/validation';
+import { formatDateTime } from '@/domain/format';
+import { LIMITS, validateNote } from '@/domain/validation';
 import { useSession } from '@/stores/session';
 import { FileUploader } from './FileUploader';
 import { Button } from '@/components/ui/Button';
@@ -72,7 +73,9 @@ export function ApplyDialog({ job, open, onClose, onSubmitted }: ApplyDialogProp
         reset();
         onClose();
       }}
-      title={`申请加入【${job.title}】`}
+      title="申请加入"
+      description={`「${job.title}」· 截止 ${formatDateTime(job.deadline)}`}
+      width="max-w-xl"
       footer={
         <>
           <Button
@@ -91,33 +94,37 @@ export function ApplyDialog({ job, open, onClose, onSubmitted }: ApplyDialogProp
       }
     >
       <div className="flex flex-col gap-5">
-        <p className="rounded-md bg-page px-3 py-2 text-xs leading-relaxed text-ink2">
-          不可重复投递同一条未撤回申请；撤回后可重新投递；提交后生成全新申请记录
+        <p className="rounded-md bg-page px-3.5 py-2.5 text-xs leading-relaxed text-ink2">
+          同一招聘不可重复投递；撤回后可重新申请。
         </p>
 
-        <Field label="上传简历文件" required>
+        <Field label="简历文件" required>
           <FileUploader value={file} onChange={setFile} />
         </Field>
 
-        <Field label="补充说明（选填，可留空）" hint="请输入你的相关经验、技能或加入理由">
+        <Field label="补充说明（选填）" hint={`不超过 ${LIMITS.note} 字`}>
           <Textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="请输入"
-            maxLength={500}
+            placeholder="请输入补充说明"
+            maxLength={LIMITS.note}
           />
-          <div className="text-right text-xs text-muted">{note.length}/500</div>
+          <div className="text-right text-xs text-muted">
+            {note.length}/{LIMITS.note}
+          </div>
         </Field>
 
         {needsConsent && (
-          <label className="flex cursor-pointer items-start gap-2 rounded-md bg-warning-soft px-3 py-2 text-xs leading-relaxed text-ink2">
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-md bg-warning-soft px-3.5 py-3 text-xs leading-relaxed text-ink2">
             <input
               type="checkbox"
               checked={consentChecked}
               onChange={(e) => setConsentChecked(e.target.checked)}
               className="mt-0.5"
             />
-            <span>我已阅读并同意《个人信息处理告知》，同意平台为处理本次申请收集并使用我的简历信息。</span>
+            <span>
+              我已阅读并同意《个人信息处理告知》，同意平台为本次申请处理我的简历信息。
+            </span>
           </label>
         )}
       </div>

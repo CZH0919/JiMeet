@@ -51,13 +51,13 @@ export function FileUploader({ value, onChange }: FileUploaderProps) {
             pick(e.dataTransfer.files?.[0]);
           }}
           className={clsx(
-            'flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors',
+            'flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-9 text-center transition-colors',
             dragOver ? 'border-primary bg-primary-soft' : 'border-line hover:border-primary hover:bg-page',
           )}
         >
           <UploadCloud className="h-8 w-8 text-muted" />
           <span className="text-sm font-medium text-ink">点击或拖拽上传简历文件</span>
-          <span className="text-xs text-ink2">仅支持 PDF / DOC / DOCX，文件上限 10MB</span>
+          <span className="text-xs text-ink2">仅支持 PDF / DOC / DOCX，文件不超过 10 MB</span>
         </button>
       ) : (
         <div className="flex items-center gap-3 rounded-lg border border-line bg-page px-4 py-3">
@@ -79,7 +79,7 @@ export function FileUploader({ value, onChange }: FileUploaderProps) {
               onChange(null);
               setError(null);
             }}
-            className="shrink-0 rounded p-1 text-muted hover:bg-surface hover:text-danger"
+            className="shrink-0 rounded p-1 text-muted transition-colors hover:bg-surface hover:text-danger"
             aria-label="移除文件"
           >
             <X size={16} />

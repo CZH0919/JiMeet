@@ -85,7 +85,7 @@ class CasSSOProvider(SSOProvider):
             state: 调用方生成的认证状态标识。
 
         Raises:
-            NotImplementedError: 正式认证尚未接入；当前调用始终抛出 reserved。
+            NotImplementedError: 学校 SSO 尚未接入；当前调用始终抛出 reserved。
         """
         raise NotImplementedError("reserved")
 
@@ -96,6 +96,6 @@ class CasSSOProvider(SSOProvider):
             callback_params: 回调或开发登录参数映射。
 
         Raises:
-            NotImplementedError: 正式认证尚未接入；当前调用始终抛出 reserved。
+            NotImplementedError: 学校 SSO 尚未接入；当前调用始终抛出 reserved。
         """
         raise NotImplementedError("reserved")

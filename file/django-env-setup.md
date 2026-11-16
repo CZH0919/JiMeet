@@ -1,6 +1,6 @@
 # Django + PostgreSQL 环境配置手册
 
-本文档只描述步骤，供手工执行。macOS 用于本地验证，Ubuntu 用于服务器部署，两者系统层命令不同，Django 配置层一致。
+本文提供 macOS 与 Ubuntu 的基础环境配置参考。当前项目依赖以 `backend/requirements/base.txt` 为准，运行配置及命令入口以 [接口文档的运行约定](../backend/design_file/api.md#11-运行约定) 为准。
 
 ---
 
@@ -9,8 +9,8 @@
 | 组件 | 版本要求 | 说明 |
 |------|---------|------|
 | Python | >= 3.12 | Django 6.1 的 `Requires-Python` 为 `>=3.12`，低于此版本装不上 |
-| PostgreSQL | 14+ 均可 | 本项目用到 `JSONB`、部分索引、`LEAST`，14 以上无兼容问题 |
-| psycopg | 3.x | 用 `psycopg[binary]`，不要用已停止维护的 `psycopg2` |
+| PostgreSQL | >= 15 | 当前 Django PostgreSQL 后端要求 15 及以上版本 |
+| psycopg | 3.x | 使用 `psycopg[binary]`，具体版本由项目依赖文件固定 |
 
 **Python 环境管理方式二选一**，不要混用：
 
@@ -88,10 +88,10 @@ python -V
 
 ```bash
 pip install --upgrade pip
-pip install "Django>=6.1,<6.2" "psycopg[binary]>=3.3,<4"
+pip install -r requirements/base.txt
 ```
 
-需要从 `.env` 读配置时再加 `python-dotenv`。若不用它，直接读 `os.environ` 也可以。
+项目从进程环境变量读取配置，不自动加载 `.env`；使用 `.env` 保存配置时，在启动服务或管理命令前将变量导出到进程环境。
 
 验证：
 
@@ -196,6 +196,8 @@ sudo apt install -y python3.12 python3.12-venv python3-dev \
 - `libpq-dev`：只有用 `psycopg`（源码包）时才需要；用 `psycopg[binary]` 可省，但装上无副作用。
 - 若发行版仓库没有 3.12，用 deadsnakes PPA 或 pyenv，不要降级 Django。
 
+软件源提供的 PostgreSQL 须满足 15+；已有公共数据库服务时使用管理员提供的连接参数，无需重复安装或初始化。
+
 ### 2.2 启动 PostgreSQL
 
 ```bash
@@ -225,7 +227,7 @@ cd /path/to/backend
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install "Django>=6.1,<6.2" "psycopg[binary]>=3.3,<4"
+pip install -r requirements/base.txt
 ```
 
 服务器上若用 systemd 托管，注意 `ExecStart` 要写 venv 内的绝对路径，例如 `/path/to/backend/.venv/bin/gunicorn`，不要依赖 `activate`。
@@ -261,9 +263,9 @@ pip install "Django>=6.1,<6.2" "psycopg[binary]>=3.3,<4"
 | `ATOMIC_REQUESTS` | `False` | 0.8，事务由 service 层显式开启 |
 | `DEFAULT_AUTO_FIELD` | `BigAutoField` | 各表主键为 `BIGINT` |
 | `AUTH_USER_MODEL` | 自定义用户模型 | 1.1，**必须在首次 `migrate` 前设置** |
-| `MEDIA_ROOT` | 独立于 `STATIC_ROOT` | 1.4，简历不得落在公开静态目录 |
+| `PRIVATE_FILE_ROOT` | 独立私有文件目录 | 不映射为公开静态或媒体 URL，简历由鉴权接口读取 |
 
-`AUTH_USER_MODEL` 是最容易踩的坑：Django 一旦执行过 `migrate`，再切换用户模型就必须删库重建。所以顺序是**先定用户模型，再 `migrate`**。
+**`AUTH_USER_MODEL`** 应在首次迁移前确定。既有数据库如需调整用户模型，应设计专门的数据迁移，不直接删除业务数据库。
 
 ---
 

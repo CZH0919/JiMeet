@@ -1,154 +1,163 @@
-import { Search, SlidersHorizontal } from 'lucide-react';
-import { useState } from 'react';
-import type { ReactNode } from 'react';
+import { RotateCcw, Search } from 'lucide-react';
 import { clsx } from 'clsx';
-import type { JobType } from '@/domain/models';
+import type { JobStatus, JobType } from '@/domain/models';
 import { repo } from '@/data';
 import { useAsync } from '@/features/useAsync';
+import { useJobList } from '@/features/useJobs';
+import { JOB_STATUS_LABEL } from '@/domain/labels';
 import { JobCard } from '@/components/job/JobCard';
 import { EmptyState, ErrorState, PageLoader } from '@/components/ui/Feedback';
 import { Pagination } from '@/components/ui/Pagination';
-import { Button } from '@/components/ui/Button';
 
 const TYPE_OPTIONS: { key: 'all' | JobType; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'competition', label: '竞赛组队' },
   { key: 'activity', label: '活动招聘' },
   { key: 'internship', label: '实验室实习' },
-  { key: 'competition_notice', label: '竞赛通知' },
+];
+
+const STATUS_OPTIONS: { key: 'all' | JobStatus; label: string }[] = [
+  { key: 'all', label: '全部状态' },
+  { key: 'open', label: JOB_STATUS_LABEL.open },
+  { key: 'full', label: JOB_STATUS_LABEL.full },
+  { key: 'closed', label: JOB_STATUS_LABEL.closed },
 ];
 
 export function JobsPage() {
-  const [type, setType] = useState<'all' | JobType>('all');
-  const [tagId, setTagId] = useState<number | undefined>(undefined);
-  const [keyword, setKeyword] = useState('');
-  const [page, setPage] = useState(1);
-  const pageSize = 9;
+  const {
+    type,
+    setType,
+    keyword,
+    setKeyword,
+    tagId,
+    setTagId,
+    status,
+    setStatus,
+    page,
+    setPage,
+    pageSize,
+    data,
+    loading,
+    error,
+    reload,
+  } = useJobList('all', 9);
 
   const tags = useAsync(() => repo.jobs.listTags(), []);
-
-  const { data, loading, error, reload } = useAsync(
-    () => repo.jobs.list({ type, keyword, tagId, page, pageSize }),
-    [type, tagId, keyword, page],
-  );
 
   const reset = () => {
     setType('all');
     setTagId(undefined);
+    setStatus(undefined);
     setKeyword('');
     setPage(1);
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-8">
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-ink">招聘搜索与筛选</h1>
+    <div className="page-shell py-8 sm:py-10">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-[26px] font-bold tracking-tight text-ink">招聘</h1>
+          <p className="mt-2 text-sm text-ink2">竞赛组队、校内活动与实验室实习</p>
+        </div>
         <div className="relative w-full sm:w-80">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
             value={keyword}
             onChange={(e) => {
               setKeyword(e.target.value);
               setPage(1);
             }}
-            placeholder="搜索标题或描述关键词"
-            className="w-full rounded-md border border-line bg-surface py-2 pl-9 pr-3 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+            placeholder="搜索标题或需求描述"
+            className="w-full rounded-full border border-line bg-surface py-2.5 pl-10 pr-4 text-sm text-ink transition-colors placeholder:text-muted focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/10"
           />
         </div>
       </div>
 
-      <div className="flex flex-col gap-6 md:flex-row">
-        <aside className="w-full shrink-0 md:w-56">
-          <div className="sticky top-20 rounded-lg border border-line bg-surface p-4">
-            <p className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-ink">
-              <SlidersHorizontal size={15} /> 筛选
-            </p>
+      {/* 筛选栏 */}
+      <div className="panel mt-6 flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-1">
+          {TYPE_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => {
+                setType(opt.key);
+                setPage(1);
+              }}
+              className={clsx(
+                'rounded-full px-4 py-1.5 text-sm transition-colors',
+                type === opt.key
+                  ? 'bg-primary-soft font-medium text-primary'
+                  : 'text-ink2 hover:bg-muted-soft hover:text-ink',
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
 
-            <FilterSection title="类型">
-              {TYPE_OPTIONS.map((t) => (
-                <FilterOption
-                  key={t.key}
-                  active={type === t.key}
-                  onClick={() => {
-                    setType(t.key);
-                    setPage(1);
-                  }}
-                  label={t.label}
-                />
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={tagId ?? ''}
+            onChange={(e) => {
+              setTagId(e.target.value ? Number(e.target.value) : undefined);
+              setPage(1);
+            }}
+            className="h-9 rounded-md border border-line bg-surface px-3 text-sm text-ink2 focus:border-primary focus:outline-none"
+          >
+            <option value="">全部标签</option>
+            {(tags.data ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={status ?? 'all'}
+            onChange={(e) => {
+              setStatus(e.target.value === 'all' ? undefined : (e.target.value as JobStatus));
+              setPage(1);
+            }}
+            className="h-9 rounded-md border border-line bg-surface px-3 text-sm text-ink2 focus:border-primary focus:outline-none"
+          >
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={reset}
+            className="inline-flex h-9 items-center gap-1 rounded-md px-3 text-sm text-ink2 transition-colors hover:bg-muted-soft hover:text-ink"
+          >
+            <RotateCcw size={14} /> 重置
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-5 flex items-center justify-between">
+        <p className="text-sm text-ink2">{data ? `共 ${data.total} 条招聘` : '加载中…'}</p>
+      </div>
+
+      <div className="mt-4">
+        {loading ? (
+          <PageLoader text="正在加载招聘…" />
+        ) : error ? (
+          <ErrorState message={error} onRetry={reload} />
+        ) : !data || data.items.length === 0 ? (
+          <EmptyState title="暂无符合条件的招聘" description="调整筛选条件后重试" />
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {data.items.map((job) => (
+                <JobCard key={job.id} job={job} />
               ))}
-            </FilterSection>
-
-            <FilterSection title="标签">
-              <select
-                value={tagId ?? ''}
-                onChange={(e) => {
-                  setTagId(e.target.value ? Number(e.target.value) : undefined);
-                  setPage(1);
-                }}
-                className="w-full rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm focus:outline-none focus:border-primary"
-              >
-                <option value="">全部标签</option>
-                {(tags.data ?? []).map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </FilterSection>
-
-            <div className="mt-4">
-              <Button size="sm" variant="secondary" className="w-full" onClick={reset}>
-                重置
-              </Button>
             </div>
-          </div>
-        </aside>
-
-        <section className="min-w-0 flex-1">
-          <div className="mb-4 text-sm text-ink2">
-            筛选结果{data ? ` · 共 ${data.total} 条` : ''}
-          </div>
-          {loading ? (
-            <PageLoader />
-          ) : error ? (
-            <ErrorState message={error} onRetry={reload} />
-          ) : data && data.items.length === 0 ? (
-            <EmptyState title="暂无符合条件的招聘" />
-          ) : (
-            <>
-              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                {data?.items.map((job) => (
-                  <JobCard key={job.id} job={job} />
-                ))}
-              </div>
-              <Pagination page={page} pageSize={pageSize} total={data?.total ?? 0} onChange={setPage} />
-            </>
-          )}
-        </section>
+            <Pagination page={page} pageSize={pageSize} total={data.total} onChange={setPage} />
+          </>
+        )}
       </div>
     </div>
-  );
-}
-
-function FilterSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="mb-4">
-      <p className="mb-1.5 text-xs font-medium text-ink2">{title}</p>
-      <div className="flex flex-col gap-1">{children}</div>
-    </div>
-  );
-}
-
-function FilterOption({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      onClick={onClick}
-      className={clsx(
-        'rounded px-2.5 py-1.5 text-left text-sm transition-colors',
-        active ? 'bg-primary-soft font-medium text-primary' : 'text-ink2 hover:bg-page hover:text-ink',
-      )}
-    >
-      {label}
-    </button>
   );
 }

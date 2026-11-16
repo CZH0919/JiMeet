@@ -1,4 +1,4 @@
-"""申请留存物理清理预留；当前仅执行访问期限控制。"""
+"""申请留存物理清理预留；不按固定期限清理申请或简历。"""
 from datetime import datetime
 
 
@@ -12,4 +12,4 @@ def purge_expired_applications(recruitment_id: int, *, now: datetime | None = No
     Raises:
         NotImplementedError: 当前未实现物理清理，调用始终被拒绝。
     """
-    raise NotImplementedError("reserved for week 2")
+    raise NotImplementedError("reserved")

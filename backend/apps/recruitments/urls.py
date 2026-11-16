@@ -5,6 +5,7 @@ from django.urls import path
 from apps.recruitments import views
 
 urlpatterns = [
+    path("admin/recruitments/<int:recruitment_id>", views.RecruitmentGovernanceView.as_view(), name="recruitment-governance"),
     path("tags", views.TagListView.as_view(), name="tag-list"),
     path("recruitments", views.RecruitmentListView.as_view(), name="recruitment-list"),
     path("me/recruitments", views.MyRecruitmentListView.as_view(), name="my-recruitment-list"),

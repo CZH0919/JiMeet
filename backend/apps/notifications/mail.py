@@ -25,7 +25,7 @@ def send_email_log(email_log_id: int) -> None:
     Raises:
         NotImplementedError: 当前实现始终拒绝执行，尚未接入真实邮件服务。
     """
-    raise NotImplementedError("reserved for week 2")
+    raise NotImplementedError("reserved")
 
 
 def retry_pending_emails(limit: int) -> None:
@@ -37,4 +37,4 @@ def retry_pending_emails(limit: int) -> None:
     Raises:
         NotImplementedError: 当前实现始终拒绝执行，尚未接入真实邮件服务。
     """
-    raise NotImplementedError("reserved for week 2")
+    raise NotImplementedError("reserved")

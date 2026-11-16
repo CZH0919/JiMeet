@@ -13,7 +13,7 @@ from apps.recruitments.serializers import PublicUserSerializer
 
 class ApplicationUpdateSerializer(StrictSerializer):
     """申请修改输入：至少提供 note 或 resume，空说明表示清空。"""
-    note = StrictCharField(required=False, allow_blank=True)
+    note = StrictCharField(required=False, allow_blank=True, max_length=1000)
     resume = serializers.FileField(required=False, allow_empty_file=True)
 
     def to_internal_value(self, data):
@@ -90,7 +90,7 @@ class ApplicationActionSerializer(StrictSerializer):
 class ApplicationSubmitSerializer(StrictSerializer):
     """投递输入：单个简历文件及可选说明，拒绝未知和重复字段。"""
     resume = serializers.FileField(allow_empty_file=True)
-    note = StrictCharField(required=False, allow_blank=True, default=None)
+    note = StrictCharField(required=False, allow_blank=True, default=None, max_length=1000)
 
     def to_internal_value(self, data):
         """校验 multipart 字段白名单及单值约束。
@@ -188,8 +188,8 @@ class ApplicationSummarySerializer(serializers.ModelSerializer):
             result["publisher_mark"] = instance.publisher_mark
             result["has_unseen_update"] = instance.has_unseen_update
         result["permissions"] = {
-            "can_modify": policies.can_modify_application(user, instance, instance.recruitment),
-            "can_withdraw": policies.can_withdraw_application(user, instance, instance.recruitment),
+            "can_modify": policies.can_modify_application(user, instance, instance.recruitment, now),
+            "can_withdraw": policies.can_withdraw_application(user, instance, instance.recruitment, now),
             "can_process": policies.can_process_application(user, instance, instance.recruitment, now),
             "can_download_resume": access.can_download_resume,
         }

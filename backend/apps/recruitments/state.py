@@ -6,7 +6,8 @@ from typing import Callable, TypeVar
 
 from django.db import transaction
 
-from apps.applications.models import Application
+from apps.applications.history import record_status_changes
+from apps.applications.models import Application, ApplicationHistoryReason
 from apps.core import clock, tx
 from apps.core.choices import ApplicationStatus, CloseReason, PublisherMark, RecruitmentStatus
 from apps.notifications import types
@@ -50,6 +51,11 @@ def reject_processing_applications(recruitment, decided_at: datetime, reason: st
         recruitment=recruitment, status=ApplicationStatus.PROCESSING,
     ).order_by("pk"))
     ids = [application.pk for application in applications]
+    record_status_changes(
+        recruitment, applications, to_status=ApplicationStatus.REJECTED,
+        reason=ApplicationHistoryReason.AUTO_FULL if reason == "full" else ApplicationHistoryReason.AUTO_WINDOW,
+        occurred_at=decided_at,
+    )
     Application.objects.filter(pk__in=ids).update(
         status=ApplicationStatus.REJECTED, decided_at=decided_at,
         publisher_mark=PublisherMark.NONE, has_unseen_update=False, updated_at=clock.now(),
@@ -64,7 +70,7 @@ def reject_processing_applications(recruitment, decided_at: datetime, reason: st
 
 
 def sync_recruitment(recruitment_id: int, *, now: datetime | None = None) -> SyncResult:
-    """独立提交到期关闭及关闭后七天的自动拒绝。
+    """独立提交到期关闭、关闭七天或满员后的剩余申请拒绝。
 
     已删除招募不再变更；重复调用不重复生成状态通知。关闭时间记录为原截止时间。
 
@@ -80,12 +86,15 @@ def sync_recruitment(recruitment_id: int, *, now: datetime | None = None) -> Syn
         RuntimeError: 调用方已在事务内。
     """
     tx.assert_not_in_atomic()
-    now = now if now is not None else clock.now()
     with tx.recruitment_lock_scope(), transaction.atomic():
         r = tx.lock_recruitment(recruitment_id)
+        now = now if now is not None else clock.now()
         # 删除时已有独立失效流程，补执行不再改变删除招聘。
         if r.deleted_at is not None:
             return SyncResult(False, 0, False)
+        if r.status == RecruitmentStatus.FULL:
+            rejected = reject_processing_applications(r, r.full_at, "full")
+            return SyncResult(False, rejected, False)
         closed = False
         rejected = 0
         if r.status == RecruitmentStatus.OPEN and now >= r.deadline:
@@ -150,9 +159,18 @@ def run_in_recruitment_tx(recruitment_id: int, fn: Callable[[Recruitment, dateti
         RuntimeError: 调用方已在事务内。
     """
     tx.assert_not_in_atomic()
-    now = clock.now()
-    # sync 首次锁行即检查存在性，不存在时不会产生补执行写入。
-    sync_recruitment(recruitment_id, now=now)
-    with tx.recruitment_lock_scope(), transaction.atomic():
-        r = tx.lock_recruitment(recruitment_id)
-        return fn(r, now)
+    while True:
+        sync_recruitment(recruitment_id)
+        with tx.recruitment_lock_scope(), transaction.atomic():
+            r = tx.lock_recruitment(recruitment_id)
+            now = clock.now()
+            end = rules.seven_day_deadline(r)
+            due = r.deleted_at is None and (
+                (r.status == RecruitmentStatus.OPEN and now >= r.deadline)
+                or (r.status == RecruitmentStatus.CLOSED and end is not None and now >= end
+                    and Application.objects.filter(recruitment=r, status=ApplicationStatus.PROCESSING).exists())
+            )
+            # 等锁期间跨过时间边界时，先释放锁并独立提交补执行。
+            if due:
+                continue
+            return fn(r, now)
