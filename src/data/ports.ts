@@ -71,6 +71,8 @@ export interface ApplicationRepository {
   clearModified(applicationId: string, seenUpdatedAt: string): Promise<void>;
   /** 下载简历文件（浏览器触发），失败抛错 */
   downloadResume(applicationId: string): Promise<void>;
+  /** 读取简历内容用于在线预览（同一鉴权接口，不产生公开链接） */
+  resumeBlob(applicationId: string): Promise<Blob>;
 }
 
 export interface NotificationRepository {
