@@ -10,7 +10,7 @@ import type {
 } from '@/domain/models';
 import type { Repositories } from '@/data/ports';
 import type { AnnouncementInput, CreateJobInput, LoginInput, RegisterInput } from '@/domain/validation';
-import { downloadResumeFile, fetchCsrf, http, setCsrfToken } from './client';
+import { downloadResumeFile, fetchCsrf, fetchResumeBlob, http, setCsrfToken } from './client';
 import {
   mapAnnouncement,
   mapAnnouncementPage,
@@ -260,6 +260,9 @@ export function createHttpRepository(): HttpRepositories {
       },
       async downloadResume(applicationId: string): Promise<void> {
         await downloadResumeFile(applicationId);
+      },
+      async resumeBlob(applicationId: string): Promise<Blob> {
+        return fetchResumeBlob(applicationId);
       },
     },
 

@@ -8,7 +8,7 @@ export interface CreateJobInput {
   description: string;
   tags: Tag[];
   minHeadcount: number | null;
-  maxHeadcount: number;
+  maxHeadcount: number | null;
   deadline: string;
 }
 
@@ -49,6 +49,7 @@ export const LIMITS = {
   reason: 500,
   nickname: 32,
   name: 32,
+  nameMin: 2,
   passwordMin: 8,
   passwordMax: 128,
 } as const;
@@ -92,7 +93,9 @@ export function validateJobForm(input: CreateJobInput): FieldErrors<CreateJobInp
 
   if (!input.tags || input.tags.length === 0) errors.tags = '请至少选择一个相关标签';
 
-  if (!Number.isInteger(input.maxHeadcount) || input.maxHeadcount < 1) {
+  if (input.maxHeadcount == null) {
+    errors.maxHeadcount = '请输入计划招募人数';
+  } else if (!Number.isInteger(input.maxHeadcount) || input.maxHeadcount < 1) {
     errors.maxHeadcount = '计划招募人数至少为 1';
   } else if (input.maxHeadcount > LIMITS.headcount) {
     errors.maxHeadcount = `计划招募人数不超过 ${LIMITS.headcount} 人`;
@@ -101,7 +104,7 @@ export function validateJobForm(input: CreateJobInput): FieldErrors<CreateJobInp
   if (input.minHeadcount != null) {
     if (!Number.isInteger(input.minHeadcount) || input.minHeadcount < 1) {
       errors.minHeadcount = '人数下限至少为 1';
-    } else if (input.minHeadcount > input.maxHeadcount) {
+    } else if (input.maxHeadcount != null && input.minHeadcount > input.maxHeadcount) {
       errors.minHeadcount = '人数下限不能大于上限';
     }
   }
@@ -152,7 +155,11 @@ export function validateModerationReason(reason: string): string | null {
   return null;
 }
 
-/** 账号只填学号/工号，@tongji.edu.cn 为固定后缀 */
+/**
+ * 账号只填邮箱前缀，@tongji.edu.cn 为固定后缀。
+ * 学校邮箱前缀并不一定等于学号/工号，因此这里不按「纯数字学号」收紧，
+ * 只拦截明显非法的字符；后续接入教务/统一身份认证后再补强校验。
+ */
 export const EMAIL_SUFFIX = '@tongji.edu.cn';
 
 const ACCOUNT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
@@ -170,12 +177,23 @@ export function toTongjiEmail(raw: string): string {
 
 export function validateAccountId(raw: string): string | null {
   const value = normalizeAccountId(raw);
-  if (!value) return '请输入学号 / 工号';
-  if (!ACCOUNT_ID_RE.test(value)) return '学号为 3–32 位字母、数字或 . _ -';
+  if (!value) return '请输入邮箱前缀';
+  if (value.length < 3) return '邮箱前缀至少 3 位';
+  if (!ACCOUNT_ID_RE.test(value)) return '邮箱前缀只能包含字母、数字或 . _ -';
   return null;
 }
 
-/** 登录表单（只含学号与密码，提交前拼成邮箱） */
+/** 姓名暂无法与教务系统核验，至少挡住纯数字、纯符号这类明显占位的填写 */
+export function validateName(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return '请输入姓名';
+  if (value.length < LIMITS.nameMin) return `姓名至少 ${LIMITS.nameMin} 个字`;
+  if (value.length > LIMITS.name) return `姓名不超过 ${LIMITS.name} 字`;
+  if (/^[\d\s._\-+/\\|]+$/.test(value)) return '姓名不能只填数字或符号';
+  return null;
+}
+
+/** 登录表单（邮箱前缀 + 密码，提交前拼成完整邮箱） */
 export interface AccountLoginForm {
   accountId: string;
   password: string;
@@ -192,6 +210,29 @@ export interface AccountRegisterForm extends AccountLoginForm {
 export type AccountLoginErrors = Partial<Record<keyof AccountLoginForm, string>>;
 export type AccountRegisterErrors = Partial<Record<keyof AccountRegisterForm, string>>;
 
+/**
+ * 密码提示文案：前端预校验与后端校验器（Django 密码验证器）共用同一套说法。
+ * 后端返回的英文/中文原文会经 `canonicalPasswordMessage` 归一到这里的措辞，
+ * 避免同一个问题出现「密码过于常见，请更换」和「参数校验失败（这个密码太常见了。）」两种提示。
+ */
+export const PASSWORD_MESSAGES = {
+  required: '请输入密码',
+  tooShort: `密码至少 ${LIMITS.passwordMin} 位`,
+  tooLong: `密码不超过 ${LIMITS.passwordMax} 位`,
+  allDigits: '密码不能全部为数字',
+  tooCommon: '密码过于常见，请更换',
+  containsAccount: '密码不能包含邮箱前缀',
+  containsName: '密码不能包含姓名',
+} as const;
+
+/** 注册页密码输入框下方的规则说明，与 `validatePassword` 的判断顺序保持一致 */
+export const PASSWORD_HINT = `至少 ${LIMITS.passwordMin} 位，不能全部为数字`;
+
+/** 各字段的简短说明：只补充用户看不出来的信息，不复述标签本身 */
+export const FIELD_HINT = {
+  name: '将展示给招聘发布者',
+} as const;
+
 const WEAK_PASSWORDS = new Set([
   '12345678',
   '123456789',
@@ -204,19 +245,37 @@ const WEAK_PASSWORDS = new Set([
 ]);
 
 export function validatePassword(password: string, context?: { email?: string; name?: string }): string | null {
-  if (!password) return '请输入密码';
-  if (password.length < LIMITS.passwordMin) return `密码至少 ${LIMITS.passwordMin} 位`;
-  if (password.length > LIMITS.passwordMax) return `密码不超过 ${LIMITS.passwordMax} 位`;
-  if (/^\d+$/.test(password)) return '密码不能全部为数字';
-  if (WEAK_PASSWORDS.has(password.toLowerCase())) return '密码过于常见，请更换';
+  if (!password) return PASSWORD_MESSAGES.required;
+  if (password.length < LIMITS.passwordMin) return PASSWORD_MESSAGES.tooShort;
+  if (password.length > LIMITS.passwordMax) return PASSWORD_MESSAGES.tooLong;
+  if (/^\d+$/.test(password)) return PASSWORD_MESSAGES.allDigits;
+  if (WEAK_PASSWORDS.has(password.toLowerCase())) return PASSWORD_MESSAGES.tooCommon;
 
   const lower = password.toLowerCase();
   const emailLocal = context?.email?.split('@')[0]?.toLowerCase();
   if (emailLocal && emailLocal.length >= 4 && lower.includes(emailLocal)) {
-    return '密码不能与邮箱过于相似';
+    return PASSWORD_MESSAGES.containsAccount;
   }
   if (context?.name && context.name.length >= 2 && lower.includes(context.name.toLowerCase())) {
-    return '密码不能与姓名过于相似';
+    return PASSWORD_MESSAGES.containsName;
+  }
+  return null;
+}
+
+/** 后端密码校验原文 → 前端统一文案（匹配不到时返回 null，交回调用方处理） */
+const PASSWORD_TEXT_RULES: [RegExp, string][] = [
+  [/太常见|常见密码|common|widely used/i, PASSWORD_MESSAGES.tooCommon],
+  [/全是数字|全为数字|entirely numeric|numeric only/i, PASSWORD_MESSAGES.allDigits],
+  [/太短|too short|至少 ?8|at least ?8/i, PASSWORD_MESSAGES.tooShort],
+  [/太长|too long/i, PASSWORD_MESSAGES.tooLong],
+  [/过于相似|too similar/i, PASSWORD_MESSAGES.containsAccount],
+];
+
+export function canonicalPasswordMessage(text: string): string | null {
+  const raw = text.trim();
+  if (!raw) return null;
+  for (const [re, message] of PASSWORD_TEXT_RULES) {
+    if (re.test(raw)) return message;
   }
   return null;
 }
