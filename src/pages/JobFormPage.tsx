@@ -11,6 +11,7 @@ import { JOB_TYPE_LABEL } from '@/domain/labels';
 import { LIMITS, validateJobForm, type CreateJobInput, type FieldErrors } from '@/domain/validation';
 import { Button } from '@/components/ui/Button';
 import { Field, Input, Textarea } from '@/components/ui/Field';
+import { NumberInput } from '@/components/ui/NumberInput';
 import { ErrorState, InfoBanner, PageLoader } from '@/components/ui/Feedback';
 import { toast } from '@/stores/toast';
 
@@ -75,7 +76,7 @@ export function JobFormPage() {
 
   const submit = async () => {
     const errs = validateJobForm(form);
-    if (isEdit && existing && form.maxHeadcount < existing.acceptedCount) {
+    if (isEdit && existing && form.maxHeadcount != null && form.maxHeadcount < existing.acceptedCount) {
       errs.maxHeadcount = `人数上限不能小于当前已接受人数（${existing.acceptedCount}）`;
     }
     setErrors(errs);
@@ -176,7 +177,7 @@ export function JobFormPage() {
           label="需求描述"
           required
           error={errors.description}
-          hint={`1～${LIMITS.jobDescription} 字，纯文本，不解释为 HTML`}
+          hint={`1～${LIMITS.jobDescription} 字，纯文本`}
         >
           <Textarea
             value={form.description}
@@ -193,24 +194,24 @@ export function JobFormPage() {
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <Field label="人数上限" required error={errors.maxHeadcount} hint={`1–${LIMITS.headcount} 人`}>
-            <Input
-              type="number"
+            <NumberInput
               min={1}
               max={LIMITS.headcount}
               value={form.maxHeadcount}
-              onChange={(e) => set('maxHeadcount', Number(e.target.value))}
+              onChange={(v) => set('maxHeadcount', v)}
               invalid={!!errors.maxHeadcount}
+              aria-label="人数上限"
             />
           </Field>
           <Field label="人数下限（选填）" error={errors.minHeadcount} hint="仅用于展示预期">
-            <Input
-              type="number"
+            <NumberInput
               min={1}
               max={LIMITS.headcount}
-              value={form.minHeadcount ?? ''}
-              onChange={(e) => set('minHeadcount', e.target.value === '' ? null : Number(e.target.value))}
+              value={form.minHeadcount}
+              onChange={(v) => set('minHeadcount', v)}
               placeholder="可留空"
               invalid={!!errors.minHeadcount}
+              aria-label="人数下限"
             />
           </Field>
           <Field label="截止时间" required error={errors.deadline}>

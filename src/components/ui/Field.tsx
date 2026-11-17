@@ -30,7 +30,7 @@ export function Field({ label, error, hint, required, children }: FieldWrapProps
   );
 }
 
-const inputBase =
+export const inputBase =
   'w-full rounded-md border border-line bg-surface px-3.5 py-2.5 text-sm text-ink placeholder:text-muted ' +
   'transition-colors focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 disabled:bg-muted-soft';
 

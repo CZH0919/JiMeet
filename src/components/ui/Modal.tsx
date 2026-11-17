@@ -11,9 +11,20 @@ interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   width?: string;
+  /** 内容区样式：预览类弹窗可关掉内部滚动，让内容自己决定高度 */
+  bodyClassName?: string;
 }
 
-export function Modal({ open, title, description, onClose, children, footer, width = 'max-w-lg' }: ModalProps) {
+export function Modal({
+  open,
+  title,
+  description,
+  onClose,
+  children,
+  footer,
+  width = 'max-w-lg',
+  bodyClassName = 'max-h-[70vh] overflow-y-auto px-6 py-5',
+}: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -47,9 +58,9 @@ export function Modal({ open, title, description, onClose, children, footer, wid
             </button>
           </div>
         )}
-        <div className="max-h-[70vh] overflow-y-auto px-6 py-5">{children}</div>
+        <div className={bodyClassName}>{children}</div>
         {footer && (
-          <div className="flex justify-end gap-3 border-t border-line px-6 py-4">{footer}</div>
+          <div className="flex flex-wrap justify-end gap-3 border-t border-line px-6 py-4">{footer}</div>
         )}
       </div>
     </div>

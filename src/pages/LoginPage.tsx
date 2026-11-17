@@ -5,11 +5,17 @@ import { clsx } from 'clsx';
 import { useAuth } from '@/features/useAuth';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/Field';
+import { PasswordInput } from '@/components/ui/PasswordInput';
 import { Logo } from '@/components/layout/Logo';
+import { fieldErrorsFrom } from '@/data/http/client';
 import {
   EMAIL_SUFFIX,
+  FIELD_HINT,
+  PASSWORD_HINT,
+  PASSWORD_MESSAGES,
   toTongjiEmail,
   validateAccountId,
+  validateName,
   validatePassword,
   type AccountLoginErrors,
   type AccountLoginForm,
@@ -22,12 +28,12 @@ import { toast } from '@/stores/toast';
 type Mode = 'login' | 'register';
 
 const FEATURES = [
-  '同济邮箱账号，学号直接登录',
+  '同济邮箱账号直接登录',
   '竞赛组队、活动招聘、实验室实习一屏发现',
   '上传 PDF / DOC 简历，一键投递并可随时撤回',
 ];
 
-/** 学号输入框：右侧固定展示 @tongji.edu.cn 后缀 */
+/** 邮箱前缀输入框：右侧固定展示 @tongji.edu.cn 后缀 */
 function AccountInput({
   value,
   onChange,
@@ -53,11 +59,11 @@ function AccountInput({
         className="min-w-0 flex-1 bg-transparent px-3.5 py-2.5 text-sm text-ink outline-none placeholder:text-muted"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="学号或工号，如 2151234"
+        placeholder="邮箱前缀，如 2151234"
         autoComplete="username"
         autoFocus={autoFocus}
         onKeyDown={onKeyDown}
-        aria-label="学号或工号"
+        aria-label="邮箱前缀"
       />
       <span className="flex select-none items-center border-l border-line bg-page px-3 text-[13px] text-ink2">
         {EMAIL_SUFFIX}
@@ -98,11 +104,27 @@ export function LoginPage() {
     toast.error(message);
   };
 
+  /**
+   * 后端字段级错误落到对应输入框，页面顶部不再重复展示同一句提示。
+   * 返回是否至少命中一个字段（命中时不再弹 toast）。
+   */
+  const applyServerErrors = (error: unknown, mapping: Record<string, (msg: string) => void>): boolean => {
+    const fields = fieldErrorsFrom(error);
+    let applied = false;
+    for (const [field, setter] of Object.entries(mapping)) {
+      const message = fields[field];
+      if (!message) continue;
+      setter(message);
+      applied = true;
+    }
+    return applied;
+  };
+
   const submitLogin = async () => {
     const errors: AccountLoginErrors = {};
     const account = validateAccountId(loginForm.accountId);
     if (account) errors.accountId = account;
-    if (!loginForm.password) errors.password = '请输入密码';
+    if (!loginForm.password) errors.password = PASSWORD_MESSAGES.required;
     setLoginErrors(errors);
     setSubmitError(null);
     if (Object.keys(errors).length > 0) return;
@@ -112,7 +134,11 @@ export function LoginPage() {
       await login({ email: toTongjiEmail(loginForm.accountId), password: loginForm.password });
       navigate(from, { replace: true });
     } catch (e) {
-      fail(e, '登录失败');
+      const applied = applyServerErrors(e, {
+        email: (msg) => setLoginErrors((errs) => ({ ...errs, accountId: msg })),
+        password: (msg) => setLoginErrors((errs) => ({ ...errs, password: msg })),
+      });
+      if (!applied) fail(e, '登录失败');
     } finally {
       setLoading(false);
     }
@@ -124,8 +150,8 @@ export function LoginPage() {
     if (account) errors.accountId = account;
 
     const name = regForm.name.trim();
-    if (!name) errors.name = '请输入姓名';
-    else if (name.length > 32) errors.name = '姓名不超过 32 字';
+    const nameError = validateName(name);
+    if (nameError) errors.name = nameError;
 
     if (regForm.nickname.trim().length > 32) errors.nickname = '昵称不超过 32 字';
 
@@ -149,7 +175,13 @@ export function LoginPage() {
       });
       navigate(from, { replace: true });
     } catch (e) {
-      fail(e, '注册失败');
+      const applied = applyServerErrors(e, {
+        email: (msg) => setRegErrors((errs) => ({ ...errs, accountId: msg })),
+        password: (msg) => setRegErrors((errs) => ({ ...errs, password: msg })),
+        name: (msg) => setRegErrors((errs) => ({ ...errs, name: msg })),
+        nickname: (msg) => setRegErrors((errs) => ({ ...errs, nickname: msg })),
+      });
+      if (!applied) fail(e, '注册失败');
     } finally {
       setLoading(false);
     }
@@ -234,7 +266,7 @@ export function LoginPage() {
 
             {mode === 'login' ? (
               <div className="mt-6 flex flex-col gap-4">
-                <Field label="学号 / 工号" required error={loginErrors.accountId}>
+                <Field label="邮箱" required error={loginErrors.accountId}>
                   <AccountInput
                     value={loginForm.accountId}
                     onChange={(accountId) => {
@@ -246,8 +278,7 @@ export function LoginPage() {
                   />
                 </Field>
                 <Field label="密码" required error={loginErrors.password}>
-                  <Input
-                    type="password"
+                  <PasswordInput
                     autoComplete="current-password"
                     value={loginForm.password}
                     onChange={(e) => {
@@ -285,7 +316,7 @@ export function LoginPage() {
               </div>
             ) : (
               <div className="mt-6 flex flex-col gap-4">
-                <Field label="学号 / 工号" required error={regErrors.accountId}>
+                <Field label="邮箱" required error={regErrors.accountId}>
                   <AccountInput
                     value={regForm.accountId}
                     onChange={(accountId) => {
@@ -297,14 +328,14 @@ export function LoginPage() {
                   />
                 </Field>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="姓名" required error={regErrors.name}>
+                  <Field label="姓名" required error={regErrors.name} hint={FIELD_HINT.name}>
                     <Input
                       value={regForm.name}
                       onChange={(e) => {
                         setRegForm((f) => ({ ...f, name: e.target.value }));
                         setRegErrors((errs) => ({ ...errs, name: undefined }));
                       }}
-                      placeholder="本人资料使用"
+                      placeholder="请填写真实姓名"
                       invalid={!!regErrors.name}
                       maxLength={32}
                     />
@@ -316,7 +347,7 @@ export function LoginPage() {
                         setRegForm((f) => ({ ...f, nickname: e.target.value }));
                         setRegErrors((errs) => ({ ...errs, nickname: undefined }));
                       }}
-                      placeholder="对外展示"
+                      placeholder="留空则使用姓名"
                       invalid={!!regErrors.nickname}
                       maxLength={32}
                     />
@@ -343,9 +374,8 @@ export function LoginPage() {
                   </div>
                 </Field>
 
-                <Field label="密码" required error={regErrors.password} hint="至少 8 位，不能全为数字或过于常见">
-                  <Input
-                    type="password"
+                <Field label="密码" required error={regErrors.password} hint={PASSWORD_HINT}>
+                  <PasswordInput
                     autoComplete="new-password"
                     value={regForm.password}
                     onChange={(e) => {
@@ -357,8 +387,7 @@ export function LoginPage() {
                   />
                 </Field>
                 <Field label="确认密码" required error={regErrors.confirm}>
-                  <Input
-                    type="password"
+                  <PasswordInput
                     autoComplete="new-password"
                     value={regForm.confirm}
                     onChange={(e) => {
