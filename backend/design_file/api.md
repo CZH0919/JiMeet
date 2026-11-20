@@ -1,17 +1,19 @@
 # JiMeet 后端接口契约
 
-更新日期：2026-11-14
+更新日期：2026-11-20
 
 本文是前后端对接的统一接口正文。下文接口路径统一以 `/api/v1` 为前缀，不带末尾斜杠；文件路径相对项目根目录。
 
 ## 1. 接口概览
 
-当前实现 40 个方法/路径（含受开关控制的开发登录），另有 2 个返回 501 的 SSO 预留接口；关闭开发登录时可用路径为 39 个。本人删除与管理员治理删除使用独立入口。
+当前实现 42 个方法/路径，包含受开关控制的开发登录。关闭开发登录时可用方法/路径为 41 个。另有 2 个返回 501 的 SSO 预留接口。本人删除与管理员治理删除使用独立入口。
 
 | 方法 | 路径 | 状态 |
 | --- | --- | --- |
 | GET | `/healthz` | 可用 |
 | GET | `/auth/csrf` | 可用 |
+| POST | `/auth/register/send-code` | 可用 |
+| POST | `/auth/register/verify-code` | 可用 |
 | POST | `/auth/register` | 可用 |
 | POST | `/auth/login` | 可用 |
 | POST | `/auth/dev-login` | 仅开发环境 |
@@ -55,13 +57,13 @@
 
 `/applications/{id}/read` 用于确认申请修改；通知已读使用 `/notifications/{id}/read` 或 `/notifications/read-all`。
 
-学校 SSO、邮件投递、聊天、推荐、通用用户主页和软删除恢复未提供；账号使用邮箱密码注册登录，业务通知通过站内通知送达。
+账号注册通过同济 SMTP 校验邮箱，已有账号凭邮箱和密码登录。业务通知通过站内通知送达。学校 SSO、聊天、推荐、通用用户主页和软删除恢复尚未提供。
 
 ### 1.1 运行约定
 
 依赖见 `backend/requirements/base.txt`：Python 3.12+、PostgreSQL 15+，Django 6.1.2、DRF 3.18.3、psycopg 3.3.6。配置从进程环境变量读取，不自动加载 `.env`；变量清单见 `backend/.env.example`。
 
-`seed_tags` 初始化标签；`run_sync_recruitments` 补执行到期关闭、七天到期及满员后的剩余申请拒绝，需要独立调用或调度。邮件发送与留存物理清理命令为预留，调用返回 `CommandError: reserved`。
+`seed_tags` 初始化标签；`run_sync_recruitments` 补执行到期关闭、七天到期及满员后的剩余申请拒绝，需要独立调用或调度。业务通知邮件派发与留存物理清理命令为预留，调用返回 `CommandError: reserved`。
 
 受控账号管理：`grant_admin` / `revoke_admin` 按邮箱授予或撤销业务管理员，锁定目标账号并与审计同事务提交，重复操作不重复记录状态变化。`init_password` 仅初始化无可用密码的账号，拒绝覆盖已有密码，复用注册的 8～128 字符及相似度策略；支持终端无回显输入或标准输入管道，不接收密码参数。三类命令失败均回滚账号变更。不提供在线授予或仅凭邮箱重设密码的入口。
 
@@ -120,7 +122,8 @@
 | VALIDATION_ERROR | 400 | 字段、查询参数或 JSON 格式错误 |
 | VALIDATION_ERROR | 415 | 请求使用了该接口不支持的媒体类型 |
 | METHOD_NOT_ALLOWED | 405 | 路径存在，但不支持该方法 |
-| RATE_LIMITED | 429 | 注册或登录失败次数超限，窗口（600 秒）内拒绝，稍后自动恢复 |
+| RATE_LIMITED | 429 | 注册或登录失败次数超限，或触发验证码重发冷却及发送额度，到期后可重试 |
+| EMAIL_DELIVERY_UNAVAILABLE | 503 | 注册邮件配置或投递暂时不可用，稍后重新申请验证码 |
 | PRIVACY_NOT_CONSENTED | 403 | 未确认个人信息处理告知，不能提交申请 |
 | SELF_APPLICATION_FORBIDDEN | 403 | 不能申请本人发布的招募 |
 | RECRUITMENT_NOT_OPEN | 409 | 当前不允许新投递 |
@@ -186,14 +189,14 @@ export default defineConfig(({ mode }) => {
 ### 3.2 Session、CSRF 与隐私确认顺序
 
 1. `GET /auth/csrf` 获取 `data.csrf_token` 并接收 `csrftoken` Cookie。
-2. `POST /auth/dev-login` 携带 Cookie、JSON 身份和 `X-CSRFToken`。
-3. 登录成功会建立 `sessionid` 并轮换 CSRF 密钥；再次 `GET /auth/csrf` 更新前端持有的令牌。
+2. 新注册依次调用 4.3 节的发码、验码、建号接口。已有账号调用 `POST /auth/login`。所有写请求携带 Cookie 和 `X-CSRFToken`。
+3. 发码成功时浏览器保存匿名 `sessionid`。注册或登录成功后再次 `GET /auth/csrf` 刷新令牌，继续使用服务器设置的会话 Cookie。
 4. `GET /me` 读取本人身份及 `privacy_consented`。**只有用户明确确认告知后**才调用 `POST /me/privacy-consent`；登录不等于同意，不能自动确认。
 5. 后续 POST/PATCH/DELETE 携带当前 CSRF 令牌。退出后丢弃前端缓存的本人资料；再次登录重新走上述流程。
 
 `sessionid` 为 HttpOnly Cookie，前端不读取、不复制到请求体或本地存储；`fetch` 使用 `credentials: 'same-origin'`。接口返回的 masked CSRF token 和当前 `csrftoken` Cookie 值均可用于请求头，但登录前的旧令牌不可继续使用。实际规则见 [Django CSRF 文档](https://docs.djangoproject.com/en/6.1/ref/csrf/)。
 
-面向普通用户的注册登录（4.3、4.4）替代上文第 2 步的开发登录作为主链路：仍先取 CSRF，注册或登录成功后重新 `GET /auth/csrf` 刷新前端令牌；开发登录仅在开发开关下供隔离联调，不得替代正式注册登录验收。
+清除 Cookie、切换浏览器或退出会话后，注册须重新发码、验码。开发登录仅用于隔离调试。
 
 浏览器调用示例：
 
@@ -221,11 +224,17 @@ async function api(path, { method = 'GET', json } = {}) {
   return payload.data;
 }
 
-async function devLogin(realId) {
+async function sendRegistrationCode(email) {
   csrfToken = (await api('/auth/csrf')).csrf_token;
-  const profile = await api('/auth/dev-login', {
-    method: 'POST', json: { real_id: realId },
-  });
+  return api('/auth/register/send-code', { method: 'POST', json: { email } });
+}
+
+async function verifyRegistrationCode(email, code) {
+  return api('/auth/register/verify-code', { method: 'POST', json: { email, code } });
+}
+
+async function completeRegistration({ email, password, name }) {
+  const profile = await api('/auth/register', { method: 'POST', json: { email, password, name } });
   csrfToken = (await api('/auth/csrf')).csrf_token;
   return profile;
 }
@@ -246,9 +255,25 @@ async function confirmPrivacyConsent() {
 
 200，`data={"csrf_token":"..."}`，同时设置 `csrftoken` Cookie。令牌为不透明字符串，不校验其固定文本长度，不写入业务日志。
 
-### 4.3 POST /auth/register（公开，强制 CSRF）
+### 4.3 邮箱验证码注册
 
-注册是面向普通用户的主入口。请求为 JSON：
+三个接口仅接收 `application/json`，不支持的媒体类型返回 415。匿名请求也强制 CSRF，失败返回 403。邮箱最长 254 字符，去除首尾空白并转小写后，完整域名必须为 `tongji.edu.cn`。注册接口响应采用统一信封和 `Cache-Control: private, no-store`。
+
+#### 4.3.1 POST /auth/register/send-code
+
+请求为 `{"email":"student@tongji.edu.cn"}`。首次受理建立匿名会话。成功返回 HTTP 200，`data={"expires_in":600,"resend_after":60}`。两项单位均为秒，分别表示验证码有效期与重发间隔。该响应表示请求已受理。已注册邮箱得到相同响应，不重复发信或变更账号。
+
+同一邮箱 60 秒内只受理一次。默认滚动限额为单邮箱 10 次/24 小时、单来源 IP 20 次/小时、全局 100 次/24 小时。来源取服务端连接的 `REMOTE_ADDR`。预占额度后才尝试投递，投递失败也计入本次额度。超限返回 429 `RATE_LIMITED`，邮件服务不可用返回 503 `EMAIL_DELIVERY_UNAVAILABLE`。同一会话对同一邮箱成功重发后仅最新验证码可用，旧注册资格也随之失效。
+
+#### 4.3.2 POST /auth/register/verify-code
+
+请求为 `{"email":"student@tongji.edu.cn","code":"012345"}`。`code` 是六位 ASCII 数字**字符串**，保留前导零。须使用发码时的邮箱和会话。验证码自发码预约起 10 分钟有效。成功返回 HTTP 200，`data={"expires_in":600}`，表示该会话自核验起 10 分钟内可完成一次注册，此时尚未创建账号或登录。
+
+错误、过期、已使用或不匹配的验证码返回 400 `VALIDATION_ERROR`，详见 `data.details.code`。在匹配的有效验证码上连续输错 5 次后该码作废。核验资格由服务端保存，前端在同一会话中显示密码设置表单即可。
+
+#### 4.3.3 POST /auth/register
+
+在验码成功后提交以下字段。
 
 | 字段 | 必填 | 约束 |
 | --- | --- | --- |
@@ -262,10 +287,10 @@ async function confirmPrivacyConsent() {
 
 - 成功 201：创建普通账号（`is_admin=false`、`privacy_consented=false`）、建立会话并轮换会话键与 CSRF 令牌；返回本人资料（字段同 `GET /me`），不返回密码摘要或内部认证标识（`real_id`、`sso_subject` 等）。内部兼容标识由服务端生成，客户端不可指定。
 - 未知字段或携带 `is_admin`、`is_staff` 等权限字段：400 `VALIDATION_ERROR`，不建账号、不赋权。
-- 邮箱已存在（含大小写变体与并发重复注册）：400 `VALIDATION_ERROR`，`data.details.email` 提示已注册；不覆盖已有账号的密码、身份绑定或权限。
+- 无匹配资格、已消费或资格过期返回 400 `VALIDATION_ERROR`，`data.details.verification` 提示重新验证。建号时撞邮箱唯一约束返回 400，详情字段为 `email`。两者均不覆盖已有账号。
 - 邮箱或密码不合规：400 `VALIDATION_ERROR`，`details` 指明字段规则。
 - 失败限流与 CSRF 校验同 4.4 口径；超限 429 `RATE_LIMITED`。
-- 不发送认证邮件或验证码；响应、日志不记录密码、密码摘要或会话凭证。响应带 `Cache-Control: private, no-store`。
+- 资格消费与建号在同一事务内完成。密码不合规可在资格有效期内更正并重试。响应和日志不展示验证码、密码或会话凭据。
 
 ### 4.4 POST /auth/login（公开，强制 CSRF）
 
@@ -319,7 +344,7 @@ async function confirmPrivacyConsent() {
 
 `PATCH /me` 仅接受 `application/json` 请求体中的 `nickname`、`email_notify_enabled`，可只提供一项；允许 `{}` 原样返回资料。昵称去首尾空白后为 1～32 字；通知开关必须是 JSON 布尔值，字符串、数字及 `null` 不接受。只读字段与未知字段返回 400，成功返回更新后的本人资料。
 
-`name`、`email` 只用于本人资料；招募发布者按业务关系可见的申请人姓名另按第 6 节裁剪，不能据此提供通用用户隐私查询接口。`email_notify_enabled=false` 不影响站内通知，真实邮件发送仍未接入。
+`name`、`email` 只用于本人资料；招募发布者按业务关系可见的申请人姓名另按第 6 节裁剪，不能据此提供通用用户隐私查询接口。`email_notify_enabled` 不影响注册验证码或站内通知。
 
 ### 4.7 POST /me/privacy-consent、POST /auth/logout
 

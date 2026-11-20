@@ -1,9 +1,32 @@
 """账号请求校验与本人资料输出，不在序列化器中查询数据库。"""
+from django.core.validators import RegexValidator
 from rest_framework import serializers
 
+from apps.accounts.identity import is_tongji_email
 from apps.accounts.passwords import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
 from apps.core.choices import Role
-from apps.core.serializers import StrictBooleanField, StrictSerializer
+from apps.core.serializers import StrictBooleanField, StrictCharField, StrictSerializer
+
+
+class RegistrationEmailSerializer(StrictSerializer):
+    """注册验证码仅接受规范化后域名精确匹配的同济邮箱。"""
+
+    email = serializers.EmailField(max_length=254)
+
+    def validate_email(self, value):
+        email = value.strip().lower()
+        if email.rsplit("@", 1)[-1] != "tongji.edu.cn" or not is_tongji_email(email):
+            raise serializers.ValidationError("须为 @tongji.edu.cn 邮箱")
+        return email
+
+
+class VerifyRegistrationCodeSerializer(RegistrationEmailSerializer):
+    """验证码为六个 ASCII 数字组成的字符串，保留前导零。"""
+
+    code = StrictCharField(
+        min_length=6, max_length=6, trim_whitespace=False,
+        validators=[RegexValidator(r"\A[0-9]{6}\Z", "请输入六位数字验证码")],
+    )
 
 
 class RegisterSerializer(StrictSerializer):

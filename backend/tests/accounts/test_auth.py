@@ -1,8 +1,10 @@
 """邮箱密码注册登录与管理员配置的接口及服务测试，用例对应 AT-01/AT-02。"""
 import io
+import re
 from datetime import timedelta
 from unittest import mock
 
+from django.core import mail
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError
@@ -17,6 +19,8 @@ from tests.base import TxTestCase
 from tests.factories import make_user
 
 REGISTER_URL = "/api/v1/auth/register"
+SEND_CODE_URL = REGISTER_URL + "/send-code"
+VERIFY_CODE_URL = REGISTER_URL + "/verify-code"
 LOGIN_URL = "/api/v1/auth/login"
 LOGOUT_URL = "/api/v1/auth/logout"
 CSRF_URL = "/api/v1/auth/csrf"
@@ -40,6 +44,25 @@ class CsrfFlowClient(APIClient):
         response = self.get(CSRF_URL)
         return response.data["data"]["csrf_token"]
 
+    def delivered_code(self, email: str) -> str:
+        """通过真实发码视图，从本次测试投递的邮件中读取验证码。"""
+        count = len(mail.outbox)
+        response = self.post_json(SEND_CODE_URL, {"email": email})
+        if response.status_code != 200 or len(mail.outbox) != count + 1:
+            raise AssertionError("测试邮件未生成")
+        message = mail.outbox[-1]
+        if message.to != [email.strip().lower()]:
+            raise AssertionError("测试邮件收件地址不匹配")
+        return re.search(r"验证码为 ([0-9]{6})", message.body).group(1)
+
+    def verify_email(self, email: str):
+        """完成发码和验码，返回用于注册的匿名会话键。"""
+        code = self.delivered_code(email)
+        response = self.post_json(VERIFY_CODE_URL, {"email": email, "code": code})
+        if response.status_code != 200:
+            raise AssertionError("邮箱验证未通过")
+        return self.session.session_key
+
     def post_json(self, url: str, payload: dict):
         """携带当前 CSRF 令牌提交 JSON；令牌轮换后自动刷新。"""
         response = self.post(
@@ -55,7 +78,8 @@ class RegisterLoginAPITest(TxTestCase):
         self.client = CsrfFlowClient()
 
     def test_full_flow_register_logout_login_profile(self):
-        """AT-01-01/10：CSRF → 注册 → 退出 → 登录 → 读取本人资料。"""
+        """AT-01-01/10：CSRF → 发码与验码 → 注册 → 退出 → 登录 → 读取本人资料。"""
+        self.client.verify_email(VALID["email"])
         response = self.client.post_json(REGISTER_URL, dict(VALID))
         self.assertEqual(response.status_code, 201)
         data = response.data["data"]
@@ -108,6 +132,7 @@ class RegisterLoginAPITest(TxTestCase):
 
     def test_register_case_insensitive_duplicate_keeps_account(self):
         """AT-01-03：大小写变体重复注册被拒，已有账号不被覆盖。"""
+        self.client.verify_email("A@Tongji.Edu.CN")
         first = self.client.post_json(REGISTER_URL, dict(VALID, email="A@Tongji.Edu.CN"))
         self.assertEqual(first.status_code, 201)
         self.assertEqual(first.data["data"]["email"], "a@tongji.edu.cn")
@@ -122,6 +147,7 @@ class RegisterLoginAPITest(TxTestCase):
 
     def test_register_integrity_race_returns_conflict(self):
         """AT-01-04：并发建号撞唯一约束时只保留一个账号。"""
+        self.client.verify_email(VALID["email"])
         with mock.patch(
             "apps.accounts.models.UserManager.create_user",
             side_effect=IntegrityError("duplicate key"),
@@ -129,7 +155,9 @@ class RegisterLoginAPITest(TxTestCase):
             response = self.client.post_json(REGISTER_URL, dict(VALID))
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["code"], ErrorCode.VALIDATION_ERROR)
+        self.assertIn("email", response.data["data"]["details"])
         self.assertEqual(User.objects.count(), 0)
+        self.assertEqual(self.client.post_json(REGISTER_URL, dict(VALID)).status_code, 201)
 
     def test_register_password_policy(self):
         """AT-01-05：弱密码、纯数字、过短密码被拒。"""
@@ -148,6 +176,7 @@ class RegisterLoginAPITest(TxTestCase):
 
     def test_register_response_has_no_internal_identifiers(self):
         """AT-01-13/14：注册与登录响应不泄露内部标识，不声明实名核验。"""
+        self.client.verify_email(VALID["email"])
         response = self.client.post_json(REGISTER_URL, dict(VALID))
         data = response.data["data"]
         self.assertEqual(
@@ -264,6 +293,7 @@ class AdminCommandTest(TxTestCase):
     def setUp(self):
         super().setUp()
         self.user = make_user(email="admin-candidate@tongji.edu.cn", password="Admin#Pass2026")
+        self.user_audits = AuditLog.objects.filter(target_type="user", target_id=self.user.pk)
         self.client = CsrfFlowClient()
 
     def test_grant_and_revoke_admin_with_audit(self):
@@ -271,8 +301,7 @@ class AdminCommandTest(TxTestCase):
         call_command("grant_admin", "--email", self.user.email, stdout=io.StringIO())
         self.user.refresh_from_db()
         self.assertTrue(self.user.is_admin)
-        audit = AuditLog.objects.get(action=actions.ADMIN_GRANT)
-        self.assertEqual((audit.target_type, audit.target_id), ("user", self.user.pk))
+        self.assertEqual(self.user_audits.filter(action=actions.ADMIN_GRANT).count(), 1)
 
         self.client.post_json(LOGIN_URL, {
             "email": self.user.email, "password": "Admin#Pass2026",
@@ -282,13 +311,13 @@ class AdminCommandTest(TxTestCase):
         call_command("revoke_admin", "--email", self.user.email, stdout=io.StringIO())
         self.user.refresh_from_db()
         self.assertFalse(self.user.is_admin)
-        self.assertTrue(AuditLog.objects.filter(action=actions.ADMIN_REVOKE).exists())
+        self.assertTrue(self.user_audits.filter(action=actions.ADMIN_REVOKE).exists())
         self.assertFalse(self.client.get(ME_URL).data["data"]["is_admin"])
 
     def test_grant_revoke_idempotent_and_unknown_email(self):
         call_command("grant_admin", "--email", self.user.email, stdout=io.StringIO())
         call_command("grant_admin", "--email", self.user.email, stdout=io.StringIO())
-        self.assertEqual(AuditLog.objects.filter(action=actions.ADMIN_GRANT).count(), 1)
+        self.assertEqual(self.user_audits.filter(action=actions.ADMIN_GRANT).count(), 1)
         with self.assertRaisesMessage(CommandError, "账号不存在"):
             call_command("grant_admin", "--email", "missing@tongji.edu.cn", stdout=io.StringIO())
 

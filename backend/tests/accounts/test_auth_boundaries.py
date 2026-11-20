@@ -36,6 +36,7 @@ class AuthInputBoundaryTest(TxTestCase):
             ("Ax!2937", 400), ("Ax!2937Q", 201), ("Az!79" * 25 + "Qx8", 201), ("Az!79" * 25 + "Qx89", 400),
         )):
             with self.subTest(length=len(password)):
+                self.client.verify_email(f"length{index}@tongji.edu.cn")
                 response = self.client.post_json("/api/v1/auth/register", dict(
                     self.payload, email=f"length{index}@tongji.edu.cn", password=password,
                 ))
@@ -78,6 +79,7 @@ class AuthInputBoundaryTest(TxTestCase):
                 ))
                 self.assertEqual(response.status_code, 400 if index < 5 else 429)
         with self.freeze_at(moment + ratelimit.WINDOW + timedelta(seconds=1)):
+            self.client.verify_email(self.payload["email"])
             self.assertEqual(self.client.post_json("/api/v1/auth/register", self.payload).status_code, 201)
         self.assertFalse(AuthFailure.objects.filter(
             key_hash=ratelimit._key_hash("email", self.payload["email"]), kind=ratelimit.KIND_REGISTER,
@@ -119,12 +121,15 @@ class AuthInputBoundaryTest(TxTestCase):
 
     def test_concurrent_registration_preserves_email_uniqueness(self):
         gate = Barrier(2)
+        with self.freeze_at(clock.now() - timedelta(seconds=61)):
+            first_key = self.client.verify_email(self.payload["email"])
+        second_key = CsrfFlowClient().verify_email(self.payload["email"])
 
-        def register():
+        def register(session_key):
             close_old_connections()
             try:
                 gate.wait(timeout=10)
-                register_with_password(**self.payload)
+                register_with_password(session_key=session_key, **self.payload)
                 return 201
             except BizError as error:
                 return error.http_status
@@ -132,6 +137,6 @@ class AuthInputBoundaryTest(TxTestCase):
                 connections.close_all()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(register) for _ in range(2)]
+            futures = [pool.submit(register, key) for key in (first_key, second_key)]
             self.assertEqual(sorted(future.result(timeout=20) for future in futures), [201, 400])
         self.assertEqual(User.objects.filter(email=self.payload["email"]).count(), 1)

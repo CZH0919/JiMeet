@@ -36,7 +36,8 @@ Django 实现：继承 `AbstractBaseUser` + `PermissionsMixin`，`USERNAME_FIELD
 | real_id | VARCHAR(32) | NOT NULL, UNIQUE | 内部唯一兼容标识；邮箱注册时由服务端生成，不作为已验证的学号/工号，也不对外公开|
 | nickname | VARCHAR(32)  | NOT NULL | 可以自主定义的用户名 |
 | name | VARCHAR(32)  | NOT NULL | 用户自填姓名，仅作未核验展示 |
-| email | VARCHAR(254) | NOT NULL（必须是同济邮箱格式） | 邮箱号，用于邮箱密码登录；后缀校验不代表归属已核验 |
+| email | VARCHAR(254) | NOT NULL（必须是同济邮箱格式） | 邮箱号，用于邮箱密码登录 |
+| email_verified_at | TIMESTAMPTZ | 可空 | 新注册账号的邮箱验证码核验时间，历史、管理及开发账号无核验事实时留空 |
 | role | VARCHAR(32)  | NOT NULL，CHECK (role IN ('student','teacher')) | 展示身份 student 或 teacher；注册时可自填，不作授权依据；开发登录使用编号映射 |
 | is_admin | BOOLEAN | NOT NULL，默认 FALSE | 是否拥有管理员权限 |
 | is_active | BOOLEAN | NOT NULL，默认 TRUE | 是否启用 |
@@ -61,11 +62,20 @@ ALTER TABLE app_user ADD CONSTRAINT user_login_method_chk
 1. 内部主键用于关系与索引，对外使用随机 uid；随机标识不能代替对象权限，所有私有信息查询仍须鉴权。
 2. `real_id` 使用字符串，保留兼容编号的前导零；新注册账号不要求提交学号/工号。
 3. `is_active` 控制账号是否启用；停用账号不能继续建立或使用业务会话。
-4. 保留 `sso_subject` 作为学校身份认证扩展字段；当前 HTTP 注册登录采用邮箱密码。
+4. 保留 `sso_subject` 作为学校身份认证扩展字段；新注册须完成邮箱验证码核验，已有账号凭邮箱密码登录。
 5. 认证凭证（SSO ticket、token 等）不落库、不写日志。
 6. `user_login_method_chk` 仅校验基础非空关系。Django 的不可用密码也可能是非空字符串，因此该约束仅拦截密码为空且 SSO 标识为 NULL 的记录；认证流程仍须检查有效身份绑定，密码登录使用 `has_usable_password()` 检查，不能把该 CHECK 当作账号可登录的保证。
 7. 业务管理员权限仅由 `is_admin` 决定，与展示身份 `role`、Django 管理字段 `is_staff` / `is_superuser` 分开。
    
+#### 注册邮箱验证
+
+| 表 | 主要字段 | 约束与用途 |
+| --- | --- | --- |
+| `registration_mail_request` | `email_key`、`ip_key`、`requested_at` | 每次受理占用一条滚动发送额度。邮箱和来源 IP 分别使用有用途区分的 HMAC。按时间、邮箱与时间、IP 与时间建立索引。 |
+| `registration_verification` | `email_key`、`session_key_hash`、`latest_request_id`、`code_digest`、`code_expires_at`、`failures`、`verified_at` | 邮箱与会话摘要联合唯一。最新预约外键采用 PROTECT。验证码只保存带密钥的摘要，有效码与已核验资格互斥。 |
+
+发送额度在 PostgreSQL 事务级咨询锁内预占，提交后调用 SMTP。只有仍匹配最新预约且尚未到期的投递结果可以激活验证码。核验在行锁内扣减尝试次数或清除验证码并记下核验时间。建号事务消费资格、写入 `app_user.email_verified_at`，最后由邮箱唯一索引保护并发建号。受理新请求时清理满 24 小时的预约及其过期验证记录。业务通知日志独立于注册投递。
+
 ### 1.2 Recruitment 招募信息表
 
 | 字段名称 | 数据类型 | 约束 | 说明 |

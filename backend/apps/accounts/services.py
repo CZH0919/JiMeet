@@ -5,7 +5,7 @@ from django.contrib.auth import authenticate
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 
-from apps.accounts import ratelimit
+from apps.accounts import ratelimit, verification
 from apps.accounts.identity import is_tongji_email, resolve_role
 from apps.accounts.models import User
 from apps.accounts.passwords import validate_new_password
@@ -41,7 +41,7 @@ def _register_rejected(email: str, ip: str, details: dict) -> ValidationFailed:
 
 
 def register_with_password(
-    *, email: str, password: str, name: str, nickname: str | None = None,
+    *, email: str, password: str, name: str, session_key: str | None, nickname: str | None = None,
     role: str = "student", ip: str = "",
 ) -> User:
     """邮箱密码注册普通账号，校验域名与密码策略，不覆盖已有账号。
@@ -51,6 +51,7 @@ def register_with_password(
 
     Args:
         email: 注册邮箱，服务内去除首尾空白并小写化。
+        session_key: 完成该邮箱核验的会话键，资格与新账号在同一事务内提交。
         password: 自设密码，须通过 Django 密码验证器。
         name: 展示姓名，1～32 字，仅作未核验展示信息。
         nickname: 可选昵称；缺省由管理器生成，不取自姓名或邮箱。
@@ -62,7 +63,7 @@ def register_with_password(
 
     Raises:
         ValidationFailed: 邮箱域名不合规、邮箱已注册（含并发与大小写变体）、
-            密码不合规或姓名/昵称不合规，400。
+            密码或资料不合规、注册资格缺失或过期，400。
         BizError: 失败次数超限，RATE_LIMITED、HTTP 429。
     """
     normalized = (email or "").strip().lower()
@@ -84,7 +85,9 @@ def register_with_password(
         ) from None
     try:
         with transaction.atomic():
+            verified_at = verification.consume_registration_grant(normalized, session_key)
             user = User.objects.create_user(
+                email_verified_at=verified_at,
                 real_id=f"reg_{uuid.uuid4().hex[:24]}",
                 name=clean_name,
                 email=normalized,
@@ -93,6 +96,9 @@ def register_with_password(
                 is_admin=False,
                 **({"nickname": nickname.strip()} if nickname is not None else {}),
             )
+    except ValidationFailed:
+        ratelimit.record_auth_failure(email=normalized, ip=ip, kind=ratelimit.KIND_REGISTER)
+        raise
     except IntegrityError:
         # 大小写变体与并发重复注册命中唯一约束：不覆盖已有账号。
         raise _register_rejected(normalized, ip, {"email": "该邮箱已注册"}) from None

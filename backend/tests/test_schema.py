@@ -7,6 +7,8 @@ from tests.base import TxTestCase
 
 BUSINESS_MODELS = [
     ("accounts", "User"),
+    ("accounts", "RegistrationMailRequest"),
+    ("accounts", "RegistrationVerification"),
     ("recruitments", "Recruitment"),
     ("recruitments", "Tag"),
     ("recruitments", "RecruitmentTag"),

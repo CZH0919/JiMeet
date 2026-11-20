@@ -7,17 +7,20 @@ from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework.authentication import SessionAuthentication
-from rest_framework.exceptions import ParseError, ValidationError
+from rest_framework.exceptions import ParseError, UnsupportedMediaType, ValidationError
+from rest_framework.parsers import JSONParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts import ratelimit
+from apps.accounts import ratelimit, verification
 from apps.accounts.serializers import (
     DevLoginSerializer,
     LoginSerializer,
     ProfileUpdateSerializer,
     RegisterSerializer,
+    RegistrationEmailSerializer,
+    VerifyRegistrationCodeSerializer,
     profile_data,
 )
 from apps.accounts.services import (
@@ -97,18 +100,63 @@ class CsrfView(APIView):
         return ok({"csrf_token": get_token(request._request)})
 
 
-class RegisterView(APIView):
-    """邮箱密码注册公开入口；匿名请求强制 CSRF。"""
+class RegistrationAPIView(APIView):
+    """公开注册接口的 JSON、匿名 CSRF 校验及响应缓存策略。"""
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    parser_classes = [JSONParser]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        SessionAuthentication().enforce_csrf(request._request)
+        if request.method == "POST" and self.get_content_negotiator().select_parser(request, request.parsers) is None:
+            raise UnsupportedMediaType(request._request.content_type)
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+class RegistrationCodeView(RegistrationAPIView):
+    """公开发码入口，受理响应不区分邮箱是否已注册。"""
+
+    def post(self, request):
+        """接收 email，返回验证码有效秒数及重发冷却秒数。超限返回 429，投递失败返回 503。"""
+        serializer = RegistrationEmailSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        verification.send_registration_code(
+            email=serializer.validated_data["email"], ip=_client_ip(request), session=request._request.session,
+        )
+        return ok({
+            "expires_in": int(verification.CODE_TTL.total_seconds()),
+            "resend_after": int(verification.RESEND_INTERVAL.total_seconds()),
+        })
+
+
+class VerifyRegistrationCodeView(RegistrationAPIView):
+    """公开验码入口。成功后仅在原会话中授予该邮箱的一次性注册资格。"""
+
+    def post(self, request):
+        """接收 email 和六位字符串 code，返回资格有效秒数。无效或失效的验证码返回 400。"""
+        serializer = VerifyRegistrationCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        verification.verify_registration_code(
+            **serializer.validated_data, session_key=verification.registration_session_key(request._request.session),
+        )
+        return ok({"expires_in": int(verification.GRANT_TTL.total_seconds())})
+
+
+class RegisterView(RegistrationAPIView):
+    """持已核验的会话注册普通账号并建立登录态。"""
 
     def post(self, request):
         """POST /api/v1/auth/register：注册普通账号并建立会话。
 
         Args:
             request: JSON 必填 email、password、name，可选 nickname、role；
-                匿名请求必须提供匹配的 CSRF Cookie 与令牌。
+                须携带已核验该邮箱的会话和匹配的 CSRF 令牌。
 
         Returns:
             Response: HTTP 201，data 为本人资料；建立 Session 并轮换 CSRF 令牌，
@@ -120,13 +168,12 @@ class RegisterView(APIView):
             ValidationFailed: 邮箱冲突或密码不合规，返回 400。
             BizError: 失败限流，返回 429 RATE_LIMITED。
         """
-        SessionAuthentication().enforce_csrf(request._request)
         data = _validate_auth_payload(request, RegisterSerializer, kind=ratelimit.KIND_REGISTER)
-        user = register_with_password(ip=_client_ip(request), **data)
+        user = register_with_password(
+            session_key=verification.registration_session_key(request._request.session), ip=_client_ip(request), **data,
+        )
         login(request._request, user, backend=PASSWORD_BACKEND)
-        response = created(profile_data(user))
-        response["Cache-Control"] = "private, no-store"
-        return response
+        return created(profile_data(user))
 
 
 class LoginView(APIView):

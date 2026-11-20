@@ -113,7 +113,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     - `uid` / `real_id`: 对外随机标识（uuid4().hex，32 位）与内部学号/工号，
       均唯一，real_id 不对外公开
     - `nickname` / `name`: 可自定义的昵称与真实姓名
-    - `email`: 同济邮箱，按小写唯一，用于邮箱密码登录；后缀校验不代表邮箱归属已核验
+    - `email`: 同济邮箱，按小写唯一，用于邮箱密码登录；邮箱归属核验时间见 email_verified_at
     - `role`: 用户角色，只能是 student 或 teacher
     - `is_admin` / `is_active`: 业务管理员标记与账号是否启用，业务权限只看 is_admin
     - `password` / `sso_subject`: Django 哈希密码与统一身份认证稳定标识，
@@ -134,6 +134,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     nickname = models.CharField("昵称", max_length=32)
     name = models.CharField("姓名", max_length=32)
     email = models.EmailField("邮箱", max_length=254)
+    email_verified_at = models.DateTimeField("注册邮箱核验时间", null=True, blank=True)
     role = models.CharField("角色", max_length=32, choices=Role.choices)
     is_admin = models.BooleanField("管理员", default=False, db_default=False)
     is_active = models.BooleanField("启用", default=True, db_default=True)
@@ -173,6 +174,48 @@ class User(AbstractBaseUser, PermissionsMixin):
             str: User(主键)。
         """
         return f"User({self.pk})"
+
+
+class RegistrationMailRequest(models.Model):
+    """注册邮件发送额度流水，包含失败投递和已注册邮箱的受理请求。"""
+
+    email_key = models.CharField(max_length=64)
+    ip_key = models.CharField(max_length=64)
+    requested_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        db_table = "registration_mail_request"
+        indexes = [
+            models.Index(fields=["email_key", "requested_at"], name="reg_mail_email_time_idx"),
+            models.Index(fields=["ip_key", "requested_at"], name="reg_mail_ip_time_idx"),
+        ]
+
+
+class RegistrationVerification(models.Model):
+    """单个邮箱在一个会话中的最新投递、有效验证码或待消费注册资格。"""
+
+    email_key = models.CharField(max_length=64)
+    session_key_hash = models.CharField(max_length=64)
+    latest_request = models.ForeignKey(
+        RegistrationMailRequest, on_delete=models.PROTECT, related_name="verification_states",
+    )
+    code_digest = models.CharField(max_length=64, blank=True, default="")
+    code_expires_at = models.DateTimeField(null=True)
+    failures = models.PositiveSmallIntegerField(default=0)
+    verified_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "registration_verification"
+        constraints = [
+            models.UniqueConstraint(fields=["email_key", "session_key_hash"], name="reg_verify_email_session_uniq"),
+            models.CheckConstraint(
+                condition=(
+                    Q(code_digest="", code_expires_at__isnull=True)
+                    | (~Q(code_digest="") & Q(code_expires_at__isnull=False, verified_at__isnull=True))
+                ),
+                name="reg_verify_code_state_chk",
+            ),
+        ]
 
 
 class AuthFailure(models.Model):

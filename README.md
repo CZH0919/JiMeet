@@ -1,13 +1,13 @@
 # 济遇 · 校内竞赛与活动招聘平台
 
 面向同济大学校内师生的 Web 端竞赛组队 / 活动招聘 / 实验室实习平台。
-仓库包含 **前端源码** 与 **Sprint2 后端源码（`backend/`）**：邮箱密码注册登录、权限判定、公告、招聘与申请、站内通知、管理员内容治理均已完成前后端对接。
+仓库包含济遇前端与 Django 后端。登录、公告、招聘与申请、站内通知和管理员治理已完成对接。新账号注册使用邮箱验证码，注册页面的三步流程待前端适配。
 
 ## 1. 当前状态
 
 | 功能域 | 数据来源 | 说明 |
 | --- | --- | --- |
-| 注册 / 登录 / 会话 | 后端 `/auth/register`、`/auth/login`、`/auth/csrf`、`/auth/logout`、`/me` | 学号 + 密码；固定 `@tongji.edu.cn` 后缀；CSRF + Session Cookie |
+| 注册 / 登录 / 会话 | 后端 `/auth/register/send-code`、`/auth/register/verify-code`、`/auth/register` 及登录、会话接口 | 同济邮箱验证码注册，已有账号凭密码登录，使用 CSRF 和 Session Cookie |
 | 个人资料 | 后端 `GET/PATCH /me`、`POST /me/privacy-consent` | 可改昵称；首次投递前单独确认个人信息处理告知 |
 | 通知公告（首页） | 后端 `/announcements` | 首页即公告页，按发布时间倒序分页；管理员可发布/编辑/删除/治理下架 |
 | 招聘 | 后端 `/recruitments`、`/me/recruitments`、`/tags` | 类型/标签/状态/关键词筛选，分页 |
@@ -16,7 +16,7 @@
 | 管理员治理 | 后端 `DELETE /admin/recruitments/{id}`、`DELETE /admin/announcements/{id}` | 独立入口、原因必填、通知发布者并写审计 |
 | 站内聊天 | **本地演示数据**（`src/data/mock/chatRepository.ts`） | 后端 Sprint2 未交付聊天接口，仅用于界面走查 |
 
-接口契约以 [`backend/design_file/api.md`](backend/design_file/api.md)（Sprint2，2026-11-14）为唯一正文。
+接口契约以 [`backend/design_file/api.md`](backend/design_file/api.md)为唯一正文。
 
 ## 2. 本轮 UI 调整
 
@@ -67,7 +67,8 @@ npm run preview    # 预览构建产物
 
 ### 4.3 注册与登录
 
-- 登录/注册只需填写**学号（工号）**，`@tongji.edu.cn` 为固定后缀，前端拼成完整邮箱提交。
+- 已有账号可在 `/login` 登录。新账号注册的后端调用顺序为申请验证码、验证邮箱、设置密码并建号，见 [API 正文 4.3](backend/design_file/api.md#43-邮箱验证码注册)。当前注册表单尚未接入发码和验码。
+- 启用注册投递时按 `backend/.env.example` 配置发件地址、SMTP 专用密码与至少 32 字符的独立随机 HMAC 密钥。SMTP 使用 465 端口的隐式 TLS。
 - 开发联调时登录页底部提供「开发调试登录」（仅 `import.meta.env.DEV` 可见，调用后端 `POST /auth/dev-login`），**不得用于正式验收**。
 - **发布公告需要管理员权限**：普通账号看不到「发布公告」按钮。授权后刷新页面即可：
 
@@ -155,10 +156,10 @@ src/
 
 | 项 | 说明 |
 | --- | --- |
-| 首页/注册提示「接口不存在（HTTP 404）」 | 后端已更新为 Sprint2；若仍出现，请确认 `runserver` 已重启、且代理指向同一后端 |
+| 首页/注册提示「接口不存在（HTTP 404）」 | 确认前端代理指向已提供对应接口的后端实例，并核对注册三步接口路径 |
 | 站内聊天 | 后端未提供接口，当前为本地演示数据，消息不会入库 |
 | 招聘列表的「已申请」标记 | 后端列表接口（RecruitmentSummary）不返回 `my_application`，列表卡片无法标注申请状态；详情页会显示 |
-| 邮件通知 | `email_notify_enabled` 为兼容字段，后端未接入邮件；前端不将其展示为可用开关 |
+| 邮件通知 | 业务通知使用站内渠道。`email_notify_enabled` 为兼容字段，不控制注册验证码 |
 | 学校 SSO / 邮箱归属验证 | 后端接口返回 501 占位；当前以邮箱域名准入 |
 | 公告关键词搜索 | 后端 `/announcements` 未提供 `q` 参数，前端只做分页 |
 
