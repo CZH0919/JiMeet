@@ -12,6 +12,7 @@ from rest_framework.test import APIClient
 
 from apps.accounts import ratelimit, verification
 from apps.accounts.models import AuthFailure, User
+from apps.accounts.services import register_with_password
 from apps.audit import actions
 from apps.audit.models import AuditLog
 from apps.core import clock
@@ -158,17 +159,24 @@ class RegisterLoginAPITest(TxTestCase):
         original.refresh_from_db()
         self.assertEqual(original.password, password_hash)
 
-    def test_register_integrity_race_returns_conflict(self):
-        """AT-01-04：并发建号撞唯一约束时只保留一个账号。"""
+    def test_registration_collision_after_verification_consumes_grant(self):
+        """验码后邮箱已被另一会话注册时，保留先建账号并消费本次资格。"""
         self.client.verify_email(VALID["email"])
-        with mock.patch(
-            "apps.accounts.models.UserManager.create_user",
-            side_effect=IntegrityError("duplicate key"),
-        ):
-            response = self.client.post_json(REGISTER_URL, register_payload())
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.data["code"], ErrorCode.VALIDATION_ERROR)
-        self.assertIn("email", response.data["data"]["details"])
+        original = make_user(email=VALID["email"], password="Initial!Password573")
+        original_hash = original.password
+        response = self.client.post_json(REGISTER_URL, register_payload())
+        self.assertEqual((response.status_code, response.data["code"]), (400, ErrorCode.VALIDATION_ERROR))
+        self.assertEqual(response.data["data"]["details"]["email"], "该邮箱已注册，请登录")
+        original.refresh_from_db()
+        self.assertEqual((User.objects.count(), original.password), (1, original_hash))
+        retry = self.client.post_json(REGISTER_URL, register_payload())
+        self.assertIn("verification", retry.data["data"]["details"])
+
+    def test_unrelated_integrity_error_rolls_back_grant(self):
+        session_key = self.client.verify_email(VALID["email"])
+        with mock.patch("apps.accounts.models.UserManager.create_user", side_effect=IntegrityError("constraint error")):
+            with self.assertRaises(IntegrityError):
+                register_with_password(**VALID, session_key=session_key)
         self.assertEqual(User.objects.count(), 0)
         self.assertEqual(self.client.post_json(REGISTER_URL, register_payload()).status_code, 201)
 

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from django.conf import settings
 
-from apps.core.choices import RecruitmentStatus
+from apps.core.choices import PUBLISHABLE_RECRUITMENT_TYPES, RecruitmentStatus
 from apps.core.errors import ValidationFailed
 
 
@@ -20,6 +20,12 @@ def add_one_year(dt: datetime) -> datetime:
         return dt.replace(year=dt.year + 1)
     except ValueError:
         return dt.replace(year=dt.year + 1, day=28)
+
+
+def validate_type(value: str) -> None:
+    """校验新增或显式变更的招聘类型。历史存储值由读取层映射。"""
+    if value not in PUBLISHABLE_RECRUITMENT_TYPES:
+        raise ValidationFailed(details={"type": "须选择竞赛组队或校内活动"})
 
 
 def validate_deadline(deadline: datetime, now: datetime) -> None:

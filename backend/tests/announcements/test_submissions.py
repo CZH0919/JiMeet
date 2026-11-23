@@ -1,7 +1,6 @@
 """公告投稿、审核与治理的接口及并发测试，用例对应 AT-09/AT-11 投稿审核部分。"""
 from datetime import timedelta
 
-from apps.announcements import services
 from apps.announcements.models import Announcement, AnnouncementSubmission
 from apps.audit import actions
 from apps.audit.models import AuditLog
@@ -9,7 +8,6 @@ from apps.core import clock
 from apps.core.errors import ErrorCode
 from apps.notifications import types
 from apps.notifications.models import Notification
-from rest_framework.test import APIClient
 from tests.base import TxTestCase
 from tests.factories import make_user
 
@@ -45,6 +43,11 @@ class SubmissionAPITest(TxTestCase):
     def submit(self, **overrides):
         return self.client.post(SUBMIT_URL, valid_payload(**overrides), format="json")
 
+    def claim(self, pk):
+        response = self.client.post(action_url(pk, "claim"), {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        return response.data["data"]
+
     def test_submit_and_view_own_submissions(self):
         """第 5 条可提交；本人可查看状态与驳回理由，他人不可见。"""
         response = self.submit()
@@ -74,8 +77,9 @@ class SubmissionAPITest(TxTestCase):
         self.client.force_authenticate(user=self.admin)
         pending = [row.pk for row in AnnouncementSubmission.objects.filter(status="pending")][:3]
         for pk in pending:
-            self.client.post(action_url(pk, "claim"), {}, format="json")
-            self.client.post(action_url(pk, "reject"), {"reason": "不合规"}, format="json")
+            batch = self.claim(pk)["claim_id"]
+            response = self.client.post(action_url(pk, "reject"), {"claim_id": batch, "reason": "不合规"}, format="json")
+            self.assertEqual(response.status_code, 200)
         self.client.force_authenticate(user=self.user)
         still_limited = self.submit(title="驳回后同日再投")
         self.assertEqual(still_limited.status_code, 409)
@@ -85,8 +89,8 @@ class SubmissionAPITest(TxTestCase):
             self.assertEqual(self.submit(title=f"待审{index}").status_code, 201)
         self.client.force_authenticate(user=self.admin)
         first = AnnouncementSubmission.objects.order_by("id").first()
-        self.client.post(action_url(first.pk, "claim"), {}, format="json")
-        self.client.post(action_url(first.pk, "approve"), {}, format="json")
+        batch = self.claim(first.pk)["claim_id"]
+        self.assertEqual(self.client.post(action_url(first.pk, "approve"), {"claim_id": batch}, format="json").status_code, 200)
         self.client.force_authenticate(user=self.user)
         # 次日提交避开每日额度，验证待审额度已随通过释放
         with self.freeze_at(clock.now() + timedelta(days=1)):
@@ -108,18 +112,26 @@ class SubmissionAPITest(TxTestCase):
         self.assertEqual(response.data["data"]["total"], 2)
         self.assertEqual([item["title"] for item in items], ["老稿", "新稿"])
         self.assertEqual([item["overdue"] for item in items], [True, False])
+        self.assertEqual(set(items[0]), {"id", "title", "content", "time_kind", "event_at", "link_url",
+                                         "submitted_at", "submitter", "claimed_by", "claimed_until", "overdue"})
+        mine_fields = {"id", "title", "content", "time_kind", "event_at", "link_url", "submitted_at",
+                       "status", "reviewed_at", "reject_reason", "announcement_id"}
+        claimed = self.claim(old.pk)
+        self.assertEqual(set(claimed), mine_fields | {"claim_id", "claimed_until"})
+        released = self.client.post(action_url(old.pk, "release"), {"claim_id": claimed["claim_id"]}, format="json")
+        self.assertEqual(set(released.data["data"]), mine_fields)
 
     def test_claim_competition_only_one_admin(self):
         """两名管理员竞争同一稿件仅一人可处理。"""
         self.submit()
         submission = AnnouncementSubmission.objects.get()
         self.client.force_authenticate(user=self.admin)
-        self.assertEqual(self.client.post(action_url(submission.pk, "claim"), {}, format="json").status_code, 200)
+        batch = self.claim(submission.pk)["claim_id"]
         self.client.force_authenticate(user=self.other_admin)
         blocked = self.client.post(action_url(submission.pk, "claim"), {}, format="json")
         self.assertEqual(blocked.status_code, 409)
         self.assertEqual(blocked.data["code"], ErrorCode.SUBMISSION_LOCKED)
-        denied = self.client.post(action_url(submission.pk, "approve"), {}, format="json")
+        denied = self.client.post(action_url(submission.pk, "approve"), {"claim_id": batch}, format="json")
         self.assertEqual(denied.status_code, 409)
 
     def test_release_and_expiry_allow_takeover_and_block_old_claimant(self):
@@ -127,9 +139,9 @@ class SubmissionAPITest(TxTestCase):
         self.submit()
         submission = AnnouncementSubmission.objects.get()
         self.client.force_authenticate(user=self.admin)
-        self.client.post(action_url(submission.pk, "claim"), {}, format="json")
-        self.client.post(action_url(submission.pk, "release"), {}, format="json")
-        stale = self.client.post(action_url(submission.pk, "approve"), {}, format="json")
+        batch = self.claim(submission.pk)["claim_id"]
+        self.assertEqual(self.client.post(action_url(submission.pk, "release"), {"claim_id": batch}, format="json").status_code, 200)
+        stale = self.client.post(action_url(submission.pk, "approve"), {"claim_id": batch}, format="json")
         self.assertEqual(stale.status_code, 409)
 
         self.client.force_authenticate(user=self.other_admin)
@@ -145,8 +157,8 @@ class SubmissionAPITest(TxTestCase):
         self.submit(title="过审稿")
         submission = AnnouncementSubmission.objects.get()
         self.client.force_authenticate(user=self.admin)
-        self.client.post(action_url(submission.pk, "claim"), {}, format="json")
-        response = self.client.post(action_url(submission.pk, "approve"), {}, format="json")
+        batch = self.claim(submission.pk)["claim_id"]
+        response = self.client.post(action_url(submission.pk, "approve"), {"claim_id": batch}, format="json")
         self.assertEqual(response.status_code, 200)
         data = response.data["data"]
         self.assertEqual(data["status"], "approved")
@@ -162,7 +174,7 @@ class SubmissionAPITest(TxTestCase):
         self.assertEqual((notice.recipient_id, notice.announcement_id),
                          (self.user.pk, announcement.pk))
         # 每次成功审核只产生一次业务结果
-        again = self.client.post(action_url(submission.pk, "approve"), {}, format="json")
+        again = self.client.post(action_url(submission.pk, "approve"), {"claim_id": batch}, format="json")
         self.assertEqual(again.status_code, 409)
         self.assertEqual(again.data["code"], ErrorCode.SUBMISSION_ALREADY_PROCESSED)
         self.assertEqual(Announcement.objects.count(), 1)
@@ -171,12 +183,12 @@ class SubmissionAPITest(TxTestCase):
         self.submit(title="拒稿")
         submission = AnnouncementSubmission.objects.get()
         self.client.force_authenticate(user=self.admin)
-        self.client.post(action_url(submission.pk, "claim"), {}, format="json")
+        batch = self.claim(submission.pk)["claim_id"]
         self.assertEqual(
-            self.client.post(action_url(submission.pk, "reject"), {}, format="json").status_code, 400,
+            self.client.post(action_url(submission.pk, "reject"), {"claim_id": batch}, format="json").status_code, 400,
         )
         response = self.client.post(
-            action_url(submission.pk, "reject"), {"reason": "非竞赛活动信息"}, format="json",
+            action_url(submission.pk, "reject"), {"reason": "非竞赛活动信息", "claim_id": batch}, format="json",
         )
         self.assertEqual(response.status_code, 200)
         submission.refresh_from_db()
@@ -190,11 +202,55 @@ class SubmissionAPITest(TxTestCase):
             action=actions.ANNOUNCEMENT_SUBMISSION_REJECT, target_id=submission.pk,
         ).exists())
         # 重复处理只产生一次业务结果
-        self.client.post(action_url(submission.pk, "claim"), {}, format="json")
         again = self.client.post(
-            action_url(submission.pk, "reject"), {"reason": "再次驳回"}, format="json",
+            action_url(submission.pk, "reject"), {"reason": "再次驳回", "claim_id": batch}, format="json",
         )
         self.assertEqual(again.status_code, 409)
+
+    def test_active_claim_retries_and_stale_actions(self):
+        pk = self.submit().data["data"]["id"]
+        self.client.force_authenticate(user=self.admin)
+        start = clock.now()
+        with self.freeze_at(start):
+            first = self.claim(pk)
+        with self.freeze_at(start + timedelta(minutes=10)):
+            repeated = self.claim(pk)
+            self.assertEqual((first["claim_id"], first["claimed_until"]),
+                             (repeated["claim_id"], repeated["claimed_until"]))
+        with self.freeze_at(start + timedelta(minutes=15)):
+            old = {"claim_id": first["claim_id"]}
+            self.assertEqual(self.client.post(action_url(pk, "approve"), old, format="json").status_code, 409)
+            current = self.claim(pk)
+            self.assertNotEqual(current["claim_id"], first["claim_id"])
+            for action in ("approve", "release", "reject"):
+                body = dict(old, reason="内容不完整") if action == "reject" else old
+                self.assertEqual(self.client.post(action_url(pk, action), body, format="json").status_code, 409)
+            for body in ({}, {"claim_id": "invalid"}, {"claim_id": 1}, {"claim_id": True}):
+                self.assertEqual(self.client.post(action_url(pk, "approve"), body, format="json").status_code, 400)
+            confirmed = self.client.post(action_url(pk, "approve"), {"claim_id": current["claim_id"]}, format="json")
+            self.assertEqual(confirmed.status_code, 200)
+            self.assertEqual(Announcement.objects.count(), 1)
+
+    def test_legacy_claim_keeps_expiry_and_release_rotates_batch(self):
+        pk = self.submit().data["data"]["id"]
+        until = clock.now() + timedelta(minutes=6)
+        AnnouncementSubmission.objects.filter(pk=pk).update(claimed_by=self.admin, claimed_until=until)
+        self.client.force_authenticate(user=self.admin)
+        batch = self.claim(pk)["claim_id"]
+        self.assertEqual(AnnouncementSubmission.objects.get(pk=pk).claimed_until, until)
+        self.assertEqual(self.client.post(action_url(pk, "release"), {"claim_id": batch}, format="json").status_code, 200)
+        self.assertNotEqual(self.claim(pk)["claim_id"], batch)
+        self.assertEqual(self.client.post(action_url(pk, "approve"), {"claim_id": batch}, format="json").status_code, 409)
+
+    def test_promoted_submitter_keeps_history_and_publishes_directly(self):
+        self.assertEqual(self.submit().status_code, 201)
+        type(self.user).objects.filter(pk=self.user.pk).update(is_admin=True)
+        denied = self.submit()
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(AnnouncementSubmission.objects.count(), 1)
+        self.user.refresh_from_db()
+        self.assertEqual(self.client.get(MINE_URL).data["data"]["total"], 1)
+        self.assertEqual(self.client.post("/api/v1/announcements", valid_payload(), format="json").status_code, 201)
 
     def test_submission_has_no_edit_or_withdraw_entry(self):
         """提交后不能改稿、撤回：无编辑/撤回入口。"""
@@ -220,8 +276,8 @@ class SubmissionAPITest(TxTestCase):
         self.submit()
         submission = AnnouncementSubmission.objects.get()
         self.client.force_authenticate(user=self.admin)
-        self.client.post(action_url(submission.pk, "claim"), {}, format="json")
-        self.client.post(action_url(submission.pk, "approve"), {}, format="json")
+        batch = self.claim(submission.pk)["claim_id"]
+        self.client.post(action_url(submission.pk, "approve"), {"claim_id": batch}, format="json")
         response = self.client.post(action_url(submission.pk, "claim"), {}, format="json")
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data["code"], ErrorCode.SUBMISSION_ALREADY_PROCESSED)

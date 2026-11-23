@@ -6,7 +6,7 @@ from django.db.models import Case, CharField, Count, F, IntegerField, Prefetch, 
 
 from apps.applications.models import Application
 from apps.applications.policies import can_submit_application
-from apps.core.choices import ApplicationStatus, CloseReason, RecruitmentStatus
+from apps.core.choices import ApplicationStatus, CloseReason, RecruitmentStatus, RecruitmentType
 from apps.core.errors import BizError, NotFound
 from apps.recruitments import policies, rules
 from apps.recruitments.models import Recruitment, Tag
@@ -43,7 +43,7 @@ def list_recruitments(*, filters: dict, now, publisher=None):
         publisher: 可选发布者；提供时限定本人发布列表。
 
     Returns:
-        QuerySet[Recruitment]: 开放招募优先，其后按 created_at、主键倒序排列。
+        QuerySet[Recruitment]: 依次显示进行中、满员和关闭的招聘，组内按创建时间及主键倒序。
     """
     queryset = _related_recruitments().filter(deleted_at__isnull=True).annotate(
         display_status=Case(
@@ -56,7 +56,11 @@ def list_recruitments(*, filters: dict, now, publisher=None):
     if filters.get("q"):
         queryset = queryset.filter(Q(title__icontains=filters["q"]) | Q(description__icontains=filters["q"]))
     if "type" in filters:
-        queryset = queryset.filter(type=filters["type"])
+        category = filters["type"]
+        if category == RecruitmentType.ACTIVITY:
+            queryset = queryset.filter(type__in=(RecruitmentType.ACTIVITY, RecruitmentType.INTERNSHIP))
+        else:
+            queryset = queryset.filter(type=category)
     if "tag" in filters:
         queryset = queryset.filter(tags__pk=filters["tag"])
     if "status" in filters:
@@ -64,7 +68,8 @@ def list_recruitments(*, filters: dict, now, publisher=None):
     return queryset.annotate(
         display_order=Case(
             When(display_status=RecruitmentStatus.OPEN, then=Value(0)),
-            default=Value(1), output_field=IntegerField(),
+            When(display_status=RecruitmentStatus.FULL, then=Value(1)),
+            default=Value(2), output_field=IntegerField(),
         ),
     ).order_by("display_order", "-created_at", "-pk")
 

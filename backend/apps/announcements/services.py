@@ -12,8 +12,9 @@
 领取记录提交处理结果。
 """
 from datetime import timedelta
+from uuid import UUID, uuid4
 
-from django.db import connection, transaction
+from django.db import transaction
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -28,9 +29,15 @@ from apps.notifications.service import notify
 TARGET_TYPE = "announcement"
 SUBMISSION_TARGET_TYPE = "announcement_submission"
 CLAIM_TTL = timedelta(minutes=15)
+CLAIM_FIELDS = ("claimed_by", "claimed_until", "claim_id")
 DAILY_SUBMISSION_LIMIT = 5
 PENDING_SUBMISSION_LIMIT = 5
-_SUBMISSION_LOCK_NAMESPACE = 0x5375626D
+
+
+def _require_current_admin(actor) -> None:
+    """在业务事务内锁定管理员身份，与停用账号、撤销权限串行。"""
+    if not User.objects.select_for_update(no_key=True).filter(pk=actor.pk, is_active=True, is_admin=True).exists():
+        raise Forbidden("需要管理员权限")
 
 
 def _lock_and_check(announcement_id: int, *, actor, require_author: bool):
@@ -54,11 +61,7 @@ def _lock_and_check(announcement_id: int, *, actor, require_author: bool):
         raise NotFound("公告不存在") from None
     if locked.deleted_at is not None:
         raise NotFound("公告不存在")
-    refreshed = (
-        User.objects.filter(pk=actor.pk).values_list("is_admin", "id").first()
-    )
-    if refreshed is None or not refreshed[0]:
-        raise Forbidden("需要管理员权限")
+    _require_current_admin(actor)
     if require_author and locked.author_id != actor.pk:
         raise Forbidden("仅公告作者可执行该操作")
     return locked
@@ -102,9 +105,7 @@ def create_announcement(
         Forbidden: 操作者当前不具管理员权限。
     """
     with transaction.atomic():
-        refreshed = User.objects.filter(pk=actor.pk).values_list("is_admin", flat=True).first()
-        if not refreshed:
-            raise Forbidden("需要管理员权限")
+        _require_current_admin(actor)
         announcement = Announcement.objects.create(
             author=actor,
             submitted_by=submitted_by,
@@ -200,7 +201,7 @@ def create_submission(
     提交后不能改稿、撤回；驳回后再次投稿按一条新投稿占用额度。
 
     Args:
-        submitter: 投稿人（任意已认证用户）。
+        submitter: 当前已启用、无管理员权限的投稿人。
         title: 竞赛或活动名称。
         content: 投稿正文。
         time_kind: deadline 或 event。
@@ -211,13 +212,16 @@ def create_submission(
         AnnouncementSubmission: 新建的待审投稿。
 
     Raises:
+        Forbidden: 账号不可用，或当前管理员应直接发布公告。
         Conflict: 当日投稿数或待审数已达上限（含本次提交），SUBMISSION_LIMIT_EXCEEDED。
     """
     with transaction.atomic():
-        # 同一投稿人的额度判定串行化，避免并发提交突破每日/待审上限。
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT pg_advisory_xact_lock(%s, %s)",
-                           [_SUBMISSION_LOCK_NAMESPACE, submitter.pk])
+        # 账号行锁使身份变更和同一投稿人的额度判定串行。
+        account = User.objects.select_for_update(no_key=True).only("is_active", "is_admin").get(pk=submitter.pk)
+        if not account.is_active:
+            raise Forbidden("账号已停用")
+        if account.is_admin:
+            raise Forbidden("管理员请使用公告直接发布入口")
         moment = now()
         same_day = AnnouncementSubmission.objects.filter(
             submitter=submitter, submitted_at__gte=_day_start(moment),
@@ -242,16 +246,26 @@ def _lock_submission(submission_id: int, *, actor):
         locked = AnnouncementSubmission.objects.select_for_update().get(pk=submission_id)
     except AnnouncementSubmission.DoesNotExist:
         raise NotFound("投稿不存在") from None
-    refreshed = User.objects.filter(pk=actor.pk).values_list("is_admin", flat=True).first()
-    if not refreshed:
-        raise Forbidden("需要管理员权限")
+    _require_current_admin(actor)
+    if locked.status != AnnouncementSubmission.STATUS_PENDING:
+        raise Conflict(ErrorCode.SUBMISSION_ALREADY_PROCESSED, "投稿已被处理")
     return locked
 
 
-def _require_claim(locked: AnnouncementSubmission, *, actor, moment) -> None:
-    """复核处理者持有未过期的领取记录。"""
-    if locked.claimed_by_id != actor.pk or locked.claimed_until is None or locked.claimed_until <= moment:
-        raise Conflict(ErrorCode.SUBMISSION_LOCKED, "请先领取该投稿且在有效期内处理")
+def _require_claim(locked: AnnouncementSubmission, *, actor, claim_id: UUID, moment) -> None:
+    """校验当前领取人、批次和到期时刻。"""
+    if (
+        locked.claimed_by_id != actor.pk or locked.claim_id is None or locked.claim_id != claim_id
+        or locked.claimed_until is None or moment >= locked.claimed_until
+    ):
+        raise Conflict(ErrorCode.SUBMISSION_LOCKED, "领取已失效，请刷新待审列表")
+
+
+def _clear_claim(locked: AnnouncementSubmission) -> None:
+    """清空领取信息，由调用方与审核状态一并保存。"""
+    locked.claimed_by = None
+    locked.claimed_until = None
+    locked.claim_id = None
 
 
 def claim_submission(submission_id: int, *, actor) -> AnnouncementSubmission:
@@ -272,23 +286,28 @@ def claim_submission(submission_id: int, *, actor) -> AnnouncementSubmission:
     with transaction.atomic():
         locked = _lock_submission(submission_id, actor=actor)
         moment = now()
-        if locked.status != AnnouncementSubmission.STATUS_PENDING:
-            raise Conflict(ErrorCode.SUBMISSION_ALREADY_PROCESSED, "投稿已被处理")
         active = locked.claimed_by_id and locked.claimed_until and locked.claimed_until > moment
-        if active and locked.claimed_by_id != actor.pk:
-            raise Conflict(ErrorCode.SUBMISSION_LOCKED, "该投稿已被其他管理员领取")
-        locked.claimed_by = actor
-        locked.claimed_until = moment + CLAIM_TTL
-        locked.save(update_fields=["claimed_by", "claimed_until"])
+        if active:
+            if locked.claimed_by_id != actor.pk:
+                raise Conflict(ErrorCode.SUBMISSION_LOCKED, "该投稿已被其他管理员领取")
+            if locked.claim_id is not None:
+                return locked
+        else:
+            locked.claimed_by = actor
+            locked.claimed_until = moment + CLAIM_TTL
+        # 升级前的有效领取由原领取人补取批次，沿用原截止时间。
+        locked.claim_id = uuid4()
+        locked.save(update_fields=CLAIM_FIELDS)
     return locked
 
 
-def release_submission(submission_id: int, *, actor) -> AnnouncementSubmission:
+def release_submission(submission_id: int, *, actor, claim_id: UUID) -> AnnouncementSubmission:
     """主动交回领取的投稿；交回后原领取人不能再凭旧领取记录处理。
 
     Args:
         submission_id: 投稿主键。
         actor: 当前领取人。
+        claim_id: 本次领取返回的批次标识。
 
     Returns:
         AnnouncementSubmission: 已清除领取信息的投稿。
@@ -300,17 +319,13 @@ def release_submission(submission_id: int, *, actor) -> AnnouncementSubmission:
     """
     with transaction.atomic():
         locked = _lock_submission(submission_id, actor=actor)
-        if locked.status != AnnouncementSubmission.STATUS_PENDING:
-            raise Conflict(ErrorCode.SUBMISSION_ALREADY_PROCESSED, "投稿已被处理")
-        if locked.claimed_by_id != actor.pk:
-            raise Conflict(ErrorCode.SUBMISSION_LOCKED, "仅领取人可交回该投稿")
-        locked.claimed_by = None
-        locked.claimed_until = None
-        locked.save(update_fields=["claimed_by", "claimed_until"])
+        _require_claim(locked, actor=actor, claim_id=claim_id, moment=now())
+        _clear_claim(locked)
+        locked.save(update_fields=CLAIM_FIELDS)
     return locked
 
 
-def approve_submission(submission_id: int, *, actor) -> AnnouncementSubmission:
+def approve_submission(submission_id: int, *, actor, claim_id: UUID) -> AnnouncementSubmission:
     """审核通过投稿：按投稿原文生成公告，发布人记审核人、投稿人另记。
 
     审核结果、审计与投稿人站内通知同事务提交。
@@ -318,6 +333,7 @@ def approve_submission(submission_id: int, *, actor) -> AnnouncementSubmission:
     Args:
         submission_id: 投稿主键。
         actor: 审核的管理员，须持有有效领取。
+        claim_id: 本次领取返回的批次标识。
 
     Returns:
         AnnouncementSubmission: 状态为 approved 的投稿。
@@ -330,9 +346,7 @@ def approve_submission(submission_id: int, *, actor) -> AnnouncementSubmission:
     with transaction.atomic():
         locked = _lock_submission(submission_id, actor=actor)
         moment = now()
-        if locked.status != AnnouncementSubmission.STATUS_PENDING:
-            raise Conflict(ErrorCode.SUBMISSION_ALREADY_PROCESSED, "投稿已被处理")
-        _require_claim(locked, actor=actor, moment=moment)
+        _require_claim(locked, actor=actor, claim_id=claim_id, moment=moment)
         announcement = Announcement.objects.create(
             author=actor,
             submitted_by=locked.submitter,
@@ -352,7 +366,8 @@ def approve_submission(submission_id: int, *, actor) -> AnnouncementSubmission:
         locked.reviewed_by = actor
         locked.reviewed_at = moment
         locked.announcement = announcement
-        locked.save(update_fields=["status", "reviewed_by", "reviewed_at", "announcement"])
+        _clear_claim(locked)
+        locked.save(update_fields=["status", "reviewed_by", "reviewed_at", "announcement", *CLAIM_FIELDS])
         record(
             actor=actor,
             action=actions.ANNOUNCEMENT_SUBMISSION_APPROVE,
@@ -368,12 +383,13 @@ def approve_submission(submission_id: int, *, actor) -> AnnouncementSubmission:
     return locked
 
 
-def reject_submission(submission_id: int, *, actor, reason: str) -> AnnouncementSubmission:
+def reject_submission(submission_id: int, *, actor, claim_id: UUID, reason: str) -> AnnouncementSubmission:
     """驳回投稿：必填理由；审核结果、审计与投稿人站内通知同事务提交。
 
     Args:
         submission_id: 投稿主键。
         actor: 审核的管理员，须持有有效领取。
+        claim_id: 本次领取返回的批次标识。
         reason: 非空驳回理由。
 
     Returns:
@@ -390,14 +406,13 @@ def reject_submission(submission_id: int, *, actor, reason: str) -> Announcement
     with transaction.atomic():
         locked = _lock_submission(submission_id, actor=actor)
         moment = now()
-        if locked.status != AnnouncementSubmission.STATUS_PENDING:
-            raise Conflict(ErrorCode.SUBMISSION_ALREADY_PROCESSED, "投稿已被处理")
-        _require_claim(locked, actor=actor, moment=moment)
+        _require_claim(locked, actor=actor, claim_id=claim_id, moment=moment)
         locked.status = AnnouncementSubmission.STATUS_REJECTED
         locked.reviewed_by = actor
         locked.reviewed_at = moment
         locked.reject_reason = reason.strip()[:500]
-        locked.save(update_fields=["status", "reviewed_by", "reviewed_at", "reject_reason"])
+        _clear_claim(locked)
+        locked.save(update_fields=["status", "reviewed_by", "reviewed_at", "reject_reason", *CLAIM_FIELDS])
         record(
             actor=actor,
             action=actions.ANNOUNCEMENT_SUBMISSION_REJECT,

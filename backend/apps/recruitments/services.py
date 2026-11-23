@@ -15,7 +15,7 @@ from apps.notifications.service import notify
 from apps.recruitments import policies, rules, state
 from apps.recruitments.models import Recruitment, RecruitmentTag, Tag
 
-CONTENT_FIELDS = ("title", "type", "description", "min_headcount", "max_headcount", "deadline")
+CONTENT_FIELDS = ("title", "type", "description", "note", "min_headcount", "max_headcount", "deadline")
 ACTIVE_APPLICATION_STATUSES = (ApplicationStatus.PROCESSING, ApplicationStatus.ACCEPTED)
 
 
@@ -165,6 +165,7 @@ def create_recruitment(user, *, data: dict):
     tx.assert_not_in_atomic()
     with transaction.atomic():
         now = clock.now()
+        rules.validate_type(data["type"])
         rules.validate_deadline(data["deadline"], now)
         rules.validate_headcount(data.get("min_headcount"), data["max_headcount"])
         tags = _active_tags(data["tag_ids"])
@@ -198,9 +199,16 @@ def update_recruitment(user, recruitment_id: int, *, data: dict):
         _authorize(user, locked)
         if not policies.can_edit(user, locked, now):
             raise Conflict(ErrorCode.RECRUITMENT_NOT_EDITABLE)
-        changed = [field for field in CONTENT_FIELDS if field in data and getattr(locked, field) != data[field]]
-        for field in changed:
-            setattr(locked, field, data[field])
+        if "type" in data:
+            rules.validate_type(data["type"])
+        changed = []
+        for field in CONTENT_FIELDS:
+            if field not in data:
+                continue
+            previous = locked.public_type if field == "type" else getattr(locked, field)
+            if data[field] != previous:
+                setattr(locked, field, data[field])
+                changed.append(field)
         rules.validate_deadline(locked.deadline, now)
         rules.validate_headcount(locked.min_headcount, locked.max_headcount)
         if locked.max_headcount < locked.accepted_count:

@@ -72,8 +72,23 @@ class SubmissionCreateSerializer(StrictSerializer):
         return _validate_link_url(value)
 
 
-class SubmissionRejectSerializer(StrictSerializer):
-    """驳回投稿的必填理由。"""
+class ClaimIdField(serializers.UUIDField):
+    """审核领取批次在 JSON 请求中以 UUID 字符串传递。"""
+
+    def to_internal_value(self, data):
+        if not isinstance(data, str):
+            self.fail("invalid")
+        return super().to_internal_value(data)
+
+
+class SubmissionClaimSerializer(StrictSerializer):
+    """处理投稿时提交本次领取的批次。"""
+
+    claim_id = ClaimIdField()
+
+
+class SubmissionRejectSerializer(SubmissionClaimSerializer):
+    """驳回投稿需要领取批次和理由。"""
 
     reason = StrictCharField(min_length=1, max_length=500)
 
@@ -142,7 +157,7 @@ class AnnouncementSerializer(serializers.ModelSerializer):
     def get_permissions(self, announcement) -> dict:
         """输出当前用户的操作入口权限，区分本人删除与治理删除。
 
-        Sprint3 起公告不可编辑，can_edit 恒为 false。
+        公告不可编辑，can_edit 恒为 false。
 
         Args:
             announcement: 公告实例。
@@ -169,6 +184,14 @@ class SubmissionSerializer(serializers.ModelSerializer):
             "id", "title", "content", "time_kind", "event_at", "link_url",
             "status", "submitted_at", "reviewed_at", "reject_reason", "announcement_id",
         )
+        read_only_fields = fields
+
+
+class ClaimedSubmissionSerializer(SubmissionSerializer):
+    """返回当前领取批次和固定的截止时间。"""
+
+    class Meta(SubmissionSerializer.Meta):
+        fields = SubmissionSerializer.Meta.fields + ("claim_id", "claimed_until")
         read_only_fields = fields
 
 

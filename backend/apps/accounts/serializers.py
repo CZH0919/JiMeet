@@ -9,7 +9,7 @@ from apps.core.serializers import StrictBooleanField, StrictCharField, StrictSer
 
 
 class RegistrationEmailSerializer(StrictSerializer):
-    """注册验证码仅接受规范化后域名精确匹配的同济邮箱。"""
+    """注册、登录及验证码请求共用的同济邮箱字段校验。"""
 
     email = serializers.EmailField(max_length=254)
 
@@ -29,10 +29,9 @@ class VerifyRegistrationCodeSerializer(RegistrationEmailSerializer):
     )
 
 
-class RegisterSerializer(StrictSerializer):
+class RegisterSerializer(RegistrationEmailSerializer):
     """邮箱验证码注册；姓名与身份必填，两次密码由服务层复核一致性。"""
 
-    email = serializers.EmailField(max_length=254)
     password = serializers.CharField(
         min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH, trim_whitespace=False,
     )
@@ -44,10 +43,9 @@ class RegisterSerializer(StrictSerializer):
     role = serializers.ChoiceField(choices=Role.values)
 
 
-class LoginSerializer(StrictSerializer):
+class LoginSerializer(RegistrationEmailSerializer):
     """邮箱登录，密码或六位验证码二选一；密码不做长度下限，兼容历史账号。"""
 
-    email = serializers.EmailField(max_length=254)
     password = serializers.CharField(
         max_length=MAX_PASSWORD_LENGTH, min_length=1, trim_whitespace=False, required=False,
     )

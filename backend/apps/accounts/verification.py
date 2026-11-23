@@ -35,7 +35,7 @@ _PURPOSE_TITLES = {
 
 
 def _unavailable() -> BizError:
-    return BizError("注册邮件暂时不可用，请稍后重试", code=ErrorCode.EMAIL_DELIVERY_UNAVAILABLE, http_status=503)
+    return BizError("邮件发送服务暂时不可用，请稍后重试", code=ErrorCode.EMAIL_DELIVERY_UNAVAILABLE, http_status=503)
 
 
 def _digest(purpose: str, value: str) -> str:
@@ -127,7 +127,8 @@ def _send_code(*, purpose: str, email: str, ip: str, session: SessionBase) -> No
     expiry = reservation.requested_at + CODE_TTL
     if clock.now() < expiry:
         RegistrationVerification.objects.filter(pk=challenge.pk, latest_request=reservation).update(
-            code_digest=_code_digest(challenge, code), code_expires_at=expiry, failures=0, verified_at=None,
+            code_digest=_code_digest(challenge, code), code_expires_at=expiry, failures=0,
+            verified_at=None, duplicate_verified_at=None,
         )
 
 
@@ -170,17 +171,31 @@ def _check_code(challenge: RegistrationVerification | None, code: str, now: date
     return False
 
 
-def verify_registration_code(*, email: str, code: str, session_key: str | None) -> None:
-    """在原会话中校验注册邮箱验证码。成功生成短时注册资格，失败累计错误次数并返回 400。"""
+def verify_registration_code(*, email: str, code: str, session_key: str | None) -> bool:
+    """在原会话验证邮箱，返回该邮箱是否已有账号。
+
+    Args:
+        email: 规范化后的注册邮箱。
+        code: 收件人提交的六位验证码。
+        session_key: 发码会话的键。
+
+    Returns:
+        bool: 已有账号返回 True 并保存短时提示凭据，新邮箱返回 False 并取得一次性建号资格。
+
+    Raises:
+        ValidationFailed: 验证码错误、过期或与当前会话不匹配。
+    """
     with transaction.atomic():
         challenge = _locked_challenge(PURPOSE_REGISTRATION, email, session_key)
         now = clock.now()
         if _check_code(challenge, code, now):
+            exists = User.objects.filter(email__iexact=email).exists()
             challenge.code_digest = ""
             challenge.code_expires_at = None
-            challenge.verified_at = now
-            challenge.save(update_fields=["code_digest", "code_expires_at", "verified_at"])
-            return
+            challenge.verified_at = None if exists else now
+            challenge.duplicate_verified_at = now if exists else None
+            challenge.save(update_fields=["code_digest", "code_expires_at", "verified_at", "duplicate_verified_at"])
+            return exists
     raise ValidationFailed(details={"code": "验证码错误或已失效"})
 
 
@@ -205,10 +220,13 @@ def consume_registration_grant(email: str, session_key: str | None) -> datetime:
     """在调用方的建号事务中消费资格并返回核验时间。
 
     Raises:
-        ValidationFailed: 邮箱与会话没有匹配资格或资格已过期。
+        ValidationFailed: 已验明邮箱属于已有账号，或没有匹配、有效的建号资格。
     """
     challenge = _locked_challenge(PURPOSE_REGISTRATION, email, session_key)
-    if not challenge or not challenge.verified_at or clock.now() >= challenge.verified_at + GRANT_TTL:
+    now = clock.now()
+    if challenge and challenge.duplicate_verified_at and now < challenge.duplicate_verified_at + GRANT_TTL:
+        raise ValidationFailed(details={"email": "该邮箱已注册，请登录"})
+    if not challenge or not challenge.verified_at or now >= challenge.verified_at + GRANT_TTL:
         raise ValidationFailed(details={"verification": "请先完成邮箱验证"})
     verified_at = challenge.verified_at
     challenge.delete()

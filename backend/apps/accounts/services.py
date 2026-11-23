@@ -93,22 +93,29 @@ def register_with_password(
     try:
         with transaction.atomic():
             verified_at = verification.consume_registration_grant(normalized, session_key)
-            user = User.objects.create_user(
-                email_verified_at=verified_at,
-                real_id=f"reg_{uuid.uuid4().hex[:24]}",
-                name=clean_name,
-                email=normalized,
-                password=password,
-                role=role,
-                is_admin=False,
-                **({"nickname": nickname.strip()} if nickname is not None else {}),
-            )
+            try:
+                with transaction.atomic():
+                    user = User.objects.create_user(
+                        email_verified_at=verified_at,
+                        real_id=f"reg_{uuid.uuid4().hex[:24]}",
+                        name=clean_name,
+                        email=normalized,
+                        password=password,
+                        role=role,
+                        is_admin=False,
+                        **({"nickname": nickname.strip()} if nickname is not None else {}),
+                    )
+            except IntegrityError as error:
+                diagnostic = getattr(error.__cause__, "diag", None)
+                if getattr(diagnostic, "constraint_name", None) != "user_email_lower_uniq":
+                    raise
+                # 并发注册的另一方已建号，本次已核验的资格仍须消费。
+                user = None
     except ValidationFailed:
         ratelimit.record_auth_failure(email=normalized, ip=ip, kind=ratelimit.KIND_REGISTER)
         raise
-    except IntegrityError:
-        # 大小写变体与并发重复注册命中唯一约束：不覆盖已有账号，提示改走登录。
-        raise _register_rejected(normalized, ip, {"email": "该邮箱已注册，请登录"}) from None
+    if user is None:
+        raise _register_rejected(normalized, ip, {"email": "该邮箱已注册，请登录"})
     ratelimit.clear_failures(scope="email", value=normalized, kind=ratelimit.KIND_REGISTER)
     return user
 

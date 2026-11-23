@@ -94,11 +94,11 @@ class AnnouncementSubmission(models.Model):
     公告投稿（待审稿）模型，对应 FR-09 的投稿、审核流程。
 
     ### Attributes
-    - `submitter`: 投稿人（普通用户或管理员均可投稿）
+    - `submitter`: 投稿时未持有管理员权限的用户
     - `title` / `content` / `time_kind` / `event_at` / `link_url`: 与公告同口径的投稿内容，
       提交后不可改稿、不可撤回
     - `status`: pending 待审核 / approved 已通过 / rejected 已驳回
-    - `claimed_by` / `claimed_until`: 领取审核的管理员与到期时间（15 分钟），
+    - `claimed_by` / `claimed_until` / `claim_id`: 领取人、固定的到期时间及领取批次，
       到期或主动交回后其他管理员可接手
     - `reviewed_by` / `reviewed_at` / `reject_reason`: 审核管理员、审核时间与驳回理由
     - `announcement`: 可空，审核通过后按投稿原文生成的正式公告（PROTECT）
@@ -132,6 +132,7 @@ class AnnouncementSubmission(models.Model):
         blank=True,
     )
     claimed_until = models.DateTimeField("领取到期时间", null=True, blank=True)
+    claim_id = models.UUIDField("领取批次", null=True, editable=False)
     reviewed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -158,6 +159,12 @@ class AnnouncementSubmission(models.Model):
             models.CheckConstraint(
                 condition=Q(status__in=["pending", "approved", "rejected"]),
                 name="announcement_submission_status_chk",
+            ),
+            models.CheckConstraint(
+                condition=Q(claim_id__isnull=True) | Q(
+                    status="pending", claimed_by__isnull=False, claimed_until__isnull=False,
+                ),
+                name="ann_submission_claim_batch_chk",
             ),
             models.CheckConstraint(
                 condition=Q(time_kind__in=AnnouncementTimeKind.values),

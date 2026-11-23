@@ -27,7 +27,7 @@
 
 ### 1.1 User 用户
 
-Django 实现：继承 `AbstractBaseUser` + `PermissionsMixin`，`USERNAME_FIELD = "real_id"` 保留为内部标识；HTTP 账号认证使用邮箱与密码，`db_table = "app_user"`（`user` 是 PostgreSQL 保留字，避免每次都要加引号）。管理员权限只使用 `is_admin`，不与 Django 自带的 `is_staff` / `is_superuser` 混用（后两者仅用于 Django Admin 后台，由开发者持有）。
+Django 实现：继承 `AbstractBaseUser` + `PermissionsMixin`，`USERNAME_FIELD = "real_id"` 保留为内部标识；HTTP 登录使用同济邮箱加密码或验证码，`db_table = "app_user"`（`user` 是 PostgreSQL 保留字，避免每次都要加引号）。管理员权限只使用 `is_admin`，不与 Django 自带的 `is_staff` / `is_superuser` 混用（后两者仅用于 Django Admin 后台，由开发者持有）。
 
 | 字段名称 | 数据类型 | 约束 | 说明 |
 |---------|---------|------|-----|
@@ -62,19 +62,19 @@ ALTER TABLE app_user ADD CONSTRAINT user_login_method_chk
 1. 内部主键用于关系与索引，对外使用随机 uid；随机标识不能代替对象权限，所有私有信息查询仍须鉴权。
 2. `real_id` 使用字符串，保留兼容编号的前导零；新注册账号不要求提交学号/工号。
 3. `is_active` 控制账号是否启用；停用账号不能继续建立或使用业务会话。
-4. 保留 `sso_subject` 作为学校身份认证扩展字段；新注册须完成邮箱验证码核验，已有账号凭邮箱密码登录。
+4. 保留 `sso_subject` 作为学校身份认证扩展字段；新注册须完成邮箱验证码核验，已有账号可凭密码或登录验证码登录。
 5. 认证凭证（SSO ticket、token 等）不落库、不写日志。
 6. `user_login_method_chk` 仅校验基础非空关系。Django 的不可用密码也可能是非空字符串，因此该约束仅拦截密码为空且 SSO 标识为 NULL 的记录；认证流程仍须检查有效身份绑定，密码登录使用 `has_usable_password()` 检查，不能把该 CHECK 当作账号可登录的保证。
 7. 业务管理员权限仅由 `is_admin` 决定，与展示身份 `role`、Django 管理字段 `is_staff` / `is_superuser` 分开。
    
-#### 注册邮箱验证
+#### 注册与登录邮箱验证
 
 | 表 | 主要字段 | 约束与用途 |
 | --- | --- | --- |
 | `registration_mail_request` | `email_key`、`ip_key`、`requested_at` | 每次受理占用一条滚动发送额度。邮箱和来源 IP 分别使用有用途区分的 HMAC。按时间、邮箱与时间、IP 与时间建立索引。 |
-| `registration_verification` | `email_key`、`session_key_hash`、`latest_request_id`、`code_digest`、`code_expires_at`、`failures`、`verified_at` | 邮箱与会话摘要联合唯一。最新预约外键采用 PROTECT。验证码只保存带密钥的摘要，有效码与已核验资格互斥。 |
+| `registration_verification` | `purpose`、`email_key`、`session_key_hash`、`latest_request_id`、`code_digest`、`code_expires_at`、`failures`、`verified_at`、`duplicate_verified_at` | 用途、邮箱与会话摘要联合唯一。最新预约外键采用 PROTECT。验证码仅保存带密钥的摘要。注册核验后，新邮箱的建号资格与已有账号的提示记录互斥。 |
 
-发送额度在 PostgreSQL 事务级咨询锁内预占，提交后调用 SMTP。只有仍匹配最新预约且尚未到期的投递结果可以激活验证码。核验在行锁内扣减尝试次数或清除验证码并记下核验时间。建号事务消费资格、写入 `app_user.email_verified_at`，最后由邮箱唯一索引保护并发建号。受理新请求时清理满 24 小时的预约及其过期验证记录。业务通知日志独立于注册投递。
+发送额度在 PostgreSQL 事务级咨询锁内预占，提交后调用 SMTP。只有仍匹配最新预约且尚未到期的投递结果可以激活验证码。验证码绑定用途，在行锁内核验并一次性消费。注册核验仅为新邮箱签发 10 分钟的建号资格；已有账号在原会话收到登录提示。建号事务消费资格、写入 `app_user.email_verified_at`，最后由邮箱唯一索引保护并发建号。受理新请求时清理满 24 小时的预约及其过期验证记录。业务通知日志独立于注册投递。
 
 ### 1.2 Recruitment 招募信息表
 
@@ -83,8 +83,9 @@ ALTER TABLE app_user ADD CONSTRAINT user_login_method_chk
 | id | BIGINT | PRIMARY KEY 自增 | 招募唯一标识 |
 | publisher_id | BIGINT | NOT NULL，FK → app_user.id | 发布者的`id`字段 |
 | title | VARCHAR(100) | NOT NULL | 招募名称（竞赛/活动名称） |
-| type | VARCHAR(32) | NOT NULL，CHECK (type IN ('competition','activity','internship')) | 类型：competition(竞赛), activity(活动)， internship（实习） |
-| description | TEXT | NOT NULL | 需求描述与补充说明 |
+| type | VARCHAR(32) | NOT NULL，CHECK (type IN ('competition','activity','internship')) | 新写入仅限 `competition`、`activity`；数据库保留旧值 `internship` |
+| description | TEXT | NOT NULL | 招聘需求描述 |
+| note | TEXT | 可空 | 发布者的补充说明，接口最长 1000 字，与申请人的投递说明独立 |
 | min_headcount | INT | 可空；非空时 `1 <= min_headcount <= max_headcount` | 预期人数下限，仅用于展示；发布时只填单个整数则为 NULL |
 | max_headcount | INT | NOT NULL，`>= 1` | 人数上限，满员判定以它为准 |
 | accepted_count | INT | NOT NULL，默认 0，`0 <= accepted_count <= max_headcount`；删除时为 0 | 当前处于已接受状态的申请数 |
@@ -139,7 +140,7 @@ CREATE INDEX recruitment_cleanup_idx ON recruitment (id)
 
 #### 设计细节
 
-1. `internship` 表示校内实验室实习。
+1. 历史 `internship` 记录对外归入 `activity`。按活动筛选时包含这些记录，按旧值筛选时仅返回历史实习记录。
 2. 人数规则：支持正整数上限或闭区间，`1 <= min_headcount <= max_headcount <= 200`；下限可空。容量判断使用上界，编辑不得低于已接受人数，等于时原子触发满员。
 3. 状态流转：
    - 到截止时间：`open → closed`（`close_reason='deadline'`，`closed_at=deadline`），不能投递新申请，已投递申请仍可处理（7 天内）；
@@ -248,7 +249,7 @@ CREATE INDEX application_applicant_idx ON application (applicant_id, created_at 
 1. 通知由统一的 service 生成，申请状态流转、招聘修改/删除/关闭、管理员删除都调用同一个入口，保证可复用。公告治理删除通知复用同一入口，关联 `announcement_id`，与招聘/申请关联互斥，见第 4 章 4.1。
 2. 招聘采用软删除，删除时不级联删除通知。通知生成和所有读取/已读操作均不按固定期限过滤；物理清理仍属预留。通知不包含简历内容或申请人的完整身份。旧通知不重写正文、不补造缺失事件；无关联旧通知仍仅向接收人提供。
 3. 申请事件通知，以及因招聘修改或删除失效而发给申请人的通知，均须同时填写 application_id 和 recruitment_id；同一用户存在撤回后重投的多条记录时，通知按业务规则关联相应申请并避免重复发送。给发布者本人的纯招聘通知可不关联 application_id。业务事件只生成站内通知：不再创建 `EmailLog(PENDING)`，不再挂接邮件派发回调；`email_notify_enabled` 保留为兼容字段，不控制发信；`email_log` 旧数据保留。
-4. 创建时校验事件接收人：提交/修改/撤回申请通知发布者；处理结果、招聘修改及删除失效通知对应申请人；招聘关闭或治理删除通知发布者；公告治理通知作者。治理通知必须包含原因。读取、未读数和已读范围使用同一关联权限过滤，公告作者撤权不影响读取本人通知。
+4. 创建时校验事件接收人：提交/修改/撤回申请通知发布者；处理结果、招聘修改及删除失效通知对应申请人；招聘关闭或治理删除通知发布者；投稿审核结果通知投稿人，公告删除结果通知发布人与投稿人，同一人只收一条。治理通知必须包含原因。读取、未读数和已读范围使用同一关联权限过滤，公告作者撤权不影响读取本人通知。
 5. `target_is_deleted` 为响应时计算的布尔字段，不入库；取关联招聘/公告当前删除标记，无关联旧通知为 false，不代替申请状态与下载权限。查询预加载目标，不通过通知恢复已删除公开内容。
 6. 业务锁和状态校验保证事件幂等；招聘内容与标签集合相同、申请说明相同且无新文件的更新不产生版本或通知。通知已读与申请修改的已阅版本彼此独立。迟到补执行的通知创建时间为实际时间，申请决定时间仍为业务边界。
 
@@ -325,18 +326,19 @@ ChatMessage：
 
 #### 设计细节
 
-1. 必须记录的操作：管理员权限的行使、用户删除本人发布的招聘、发布者查看申请人简历、申请人修改申请、权限被拒绝的请求、管理员发布公告，发布者编辑公告，发布者或管理员删除公告。
+1. 必须记录的操作：管理员权限的行使、用户删除本人发布的招聘、发布者查看申请人简历、申请人修改申请、权限被拒绝的请求、管理员发布公告、审核投稿及删除公告。
 2. 日志自每条记录的 created_at 起至少保留一年；业务操作只追加，不提供修改与删除接口，当前不调度审计清理。审计留存独立于申请状态与招聘软删除，不因业务删除而提前删改。target_id 是无外键的历史对象标识，允许其目标因历史清理而不存在。
 3. 日志中不写入认证凭证、简历内容、原始文件名、补充说明或申请人与招聘的额外映射；reason 仅记录必要的操作原因，不复制申请明细。申请清理后不另存已删除对象的快照或身份对照表。审计记录仍可能识别操作者，这是至少一年审计留存要求的明确例外，仅供授权审计使用，不作为普通申请查询入口。
 
 ### 1.9 Announcement 公告
 
-对应需求 FR-09（竞赛与活动公告）。由管理员发布；作者（管理员）可编辑与本人删除，任一管理员可经治理入口删除并通知作者；所有已登录用户可查看列表和详情，并可通过关联的招募链接进入招募。
+对应需求 FR-09（竞赛与活动公告）。管理员可以直接发布，或按普通用户投稿原文审核发布。已发布公告不可编辑；作者保有管理员权限时可本人删除，任一现任管理员可治理删除；所有已登录用户可查看列表和详情，并可通过关联的招募链接进入招募。
 
 | 字段名称 | 数据类型 | 约束 | 说明 |
 |---------|---------|------|-----|
 | id | BIGINT | PRIMARY KEY 自增 | 公告标识 |
-| author_id | BIGINT | NOT NULL，FK → app_user.id | 发布公告的管理员，PROTECT |
+| author_id | BIGINT | NOT NULL，FK → app_user.id | 直接发布或审核通过的管理员，PROTECT |
+| submitted_by_id | BIGINT | 可空，FK → app_user.id | 来自投稿时记录投稿人，直接发布为空，PROTECT |
 | title | VARCHAR(100) | NOT NULL | 竞赛/活动名称 |
 | content | TEXT | NOT NULL | 公告正文，含报名方式等其他相关信息 |
 | time_kind | VARCHAR(16) | NOT NULL，CHECK (time_kind IN ('deadline','event')) | 时间类型：deadline(报名截止时间), event(活动时间) |
@@ -356,7 +358,7 @@ ALTER TABLE announcement ADD CONSTRAINT announcement_time_kind_chk
 
 索引：
 ```sql
--- 公告列表：置顶优先，再按发布时间倒序；仅含未删除公告
+-- 未删除公告的组合索引，公开列表按发布时间与编号倒序
 CREATE INDEX announcement_list_idx ON announcement (is_pinned DESC, created_at DESC) WHERE deleted_at IS NULL;
 -- 某招募被哪些公告引用
 CREATE INDEX announcement_recruitment_idx ON announcement (recruitment_id) WHERE recruitment_id IS NOT NULL;
@@ -366,18 +368,24 @@ CREATE INDEX announcement_recruitment_idx ON announcement (recruitment_id) WHERE
 
 1. 权限（均为应用层校验，不看 `is_staff`；未登录用户一律不可查看；业务服务在行锁内复核当前权限）：
    - 发布：当前 `is_admin` 用户；
-   - 编辑与本人删除：当前 `is_admin` 且 `author_id` 等于当前用户，其他管理员也不能编辑；
+   - 本人删除仅允许当前仍有管理员权限的作者。所有已发布公告均不可编辑，Django 公告后台只读；
    - 治理删除：当前 `is_admin` 用户，独立入口（`DELETE /admin/announcements/{id}`），与本人删除入口分离；
    - 置顶：数据库保留 `is_pinned` 字段，HTTP 不提供置顶能力（不可写、不参与排序），后续是否恢复见《修订说明与待确认事项》P-03；
    - 查看：已登录用户。
-   - 公告作者被撤销管理员权限后，发布、编辑、本人删除与治理删除均被拒绝（含旧会话）。
+   - 公告作者被撤销管理员权限后，直接发布、本人删除与治理删除均被拒绝（含旧会话）。
 2. 删除为软删除（设置 `deleted_at`）。本人删除不需要原因；治理删除原因必填，写入 AuditLog.reason，公告表不另设字段。
-3. 发布、编辑、删除均写入 AuditLog：`action` 取 announcement_publish / announcement_update / announcement_delete，`target_type` 为 `announcement`；重复删除返回不存在/已删除结果，不重复写审计。
+3. 发布与删除在同一事务写入 `announcement_publish` 或 `announcement_delete` 审计；重复删除返回 404。审核通过另写投稿审核审计。
 4. 列表按 `created_at DESC, id DESC` 稳定排序，不按 `is_pinned` 排序。
-5. `event_at` 为带时区合法值即可，不限制必须晚于当前时间；已过时间不自动等于已删除，编辑不因历史时间被拒绝（《修订说明与待确认事项》2.3）；`title`、`content`、`time_kind`、`event_at` 为必填。
-6. 正常发布、编辑、本人删除不生成站内通知和邮件。治理删除在同一业务事务内完成软删除、审计与作者站内通知（`announcement_admin_removed`，含公告名称、处置结果、原因与公告引用），不产生邮件任务。
+5. `event_at` 为带时区合法值即可，不限制必须晚于当前时间；已过时间不自动等于已删除；`title`、`content`、`time_kind`、`event_at` 为必填。
+6. 直接发布不广播。两种删除均在同一事务内完成软删除、审计及发布人与投稿人的去重站内通知；治理删除另含处置原因。
 7. `recruitment_id` 指向的招募被软删除、关闭或满员后，公告仍保留；公告详情以 `recruitment_available` 表达链接可用性（关联存在且未删除），已删除招募的公开详情不因公告恢复。写入时该招募须存在且未删除；业务删除不物理删除 Recruitment 行，不破坏本表关联。
 8. 公告不属于 Recruitment 的子类型，不进入招募的列表、搜索和定时任务。
+
+### 1.10 AnnouncementSubmission 公告投稿
+
+`announcement_submission` 保存投稿人、原始内容、提交时间与审核状态。待审稿按 `status, submitted_at` 建索引，本人历史使用 `submitter_id, submitted_at DESC` 索引。审核人、审核时间、驳回理由及获批后生成的公告引用与审核结果同事务写入。已发布公告公开署名为审核管理员，投稿人单独保存在 `announcement.submitted_by_id`。
+
+`claimed_by_id`、`claimed_until` 和 UUID `claim_id` 标识一次固定 15 分钟的领取。同一领取人有效期内重试沿用原批次。交回、通过、驳回均锁定投稿并核对当前管理员、批次和期限，完成后清空三个领取字段。
 
 ## 2 表关系概览
 

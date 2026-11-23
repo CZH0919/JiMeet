@@ -192,10 +192,10 @@ class RegistrationMailRequest(models.Model):
 
 
 class RegistrationVerification(models.Model):
-    """单个用途下一个邮箱在一个会话中的最新投递、有效验证码或待消费核验资格。
+    """保存同一用途、邮箱与会话的验证码，以及注册核验结果。
 
     `purpose` 区分注册与登录验证码（registration / login），两种验证码分别绑定
-    用途、邮箱和会话，共享同邮箱的重发间隔与发送额度。
+    用途、邮箱和会话，共享同邮箱的重发间隔与发送额度。新邮箱的建号资格与已有账号提示互斥。
     """
 
     PURPOSE_REGISTRATION = "registration"
@@ -211,6 +211,7 @@ class RegistrationVerification(models.Model):
     code_expires_at = models.DateTimeField(null=True)
     failures = models.PositiveSmallIntegerField(default=0)
     verified_at = models.DateTimeField(null=True)
+    duplicate_verified_at = models.DateTimeField("已有账号核验时间", null=True)
 
     class Meta:
         db_table = "registration_verification"
@@ -229,6 +230,12 @@ class RegistrationVerification(models.Model):
                     | (~Q(code_digest="") & Q(code_expires_at__isnull=False, verified_at__isnull=True))
                 ),
                 name="reg_verify_code_state_chk",
+            ),
+            models.CheckConstraint(
+                condition=Q(duplicate_verified_at__isnull=True) | Q(
+                    purpose="registration", verified_at__isnull=True, code_digest="", code_expires_at__isnull=True,
+                ),
+                name="reg_duplicate_receipt_chk",
             ),
         ]
 

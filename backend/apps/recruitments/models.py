@@ -13,7 +13,7 @@ class Recruitment(models.Model):
 
     ### Attributes
     - `publisher`: 发布者，删除用户时受 PROTECT 保护
-    - `title` / `type` / `description`: 招聘名称、类型和需求描述
+    - `title` / `type` / `description` / `note`: 招聘名称、存储类型、需求描述和可选补充说明
     - `min_headcount` / `max_headcount`: 展示人数下限与实际接受人数上限
     - `accepted_count`: 当前已接受人数，招聘删除后归零；历史结果由状态变更记录追溯
     - `status` / `deadline`: 当前状态与投递截止时间
@@ -35,6 +35,7 @@ class Recruitment(models.Model):
     title = models.CharField("招募名称", max_length=100)
     type = models.CharField("类型", max_length=32, choices=RecruitmentType.choices)
     description = models.TextField("需求描述")
+    note = models.TextField("补充说明", null=True, blank=True)
     min_headcount = models.IntegerField("人数下限", null=True, blank=True)
     max_headcount = models.IntegerField("人数上限")
     accepted_count = models.IntegerField("已接受人数", default=0, db_default=0)
@@ -160,6 +161,11 @@ class Recruitment(models.Model):
                 name="recruitment_description_trgm",
             ),
         ]
+
+    @property
+    def public_type(self) -> str:
+        """返回公开招聘类型，历史实验室实习归入校内活动。"""
+        return RecruitmentType.ACTIVITY if self.type == RecruitmentType.INTERNSHIP else self.type
 
     def __str__(self) -> str:
         """返回仅含数据库主键的标识，避免输出招聘内容。"""

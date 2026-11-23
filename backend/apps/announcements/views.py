@@ -10,7 +10,9 @@ from apps.announcements.serializers import (
     AnnouncementCreateSerializer,
     AnnouncementQuerySerializer,
     AnnouncementSerializer,
+    ClaimedSubmissionSerializer,
     GovernanceDeleteSerializer,
+    SubmissionClaimSerializer,
     SubmissionCreateSerializer,
     SubmissionRejectSerializer,
     SubmissionSerializer,
@@ -219,6 +221,7 @@ class SubmissionCreateView(PrivateAPIView):
 
         Raises:
             ValidationError: 字段不合法，返回 400。
+            Forbidden: 当前管理员应通过公告直接发布入口发布。
             Conflict: 当日投稿数或待审数已达上限，返回 409 SUBMISSION_LIMIT_EXCEEDED。
         """
         serializer = SubmissionCreateSerializer(data=request.data)
@@ -264,34 +267,27 @@ class AdminSubmissionActionView(PrivateAPIView):
     def post(self, request, submission_id, action):
         """POST /api/v1/admin/announcement-submissions/{id}/{action}。
 
-        action 取 claim / release / approve / reject；reject 必填 reason（1～500 字），
-        其余动作请求体为空或 JSON 空对象。通过时按投稿原文生成公告（发布人记
-        审核管理员、投稿人另记）；驳回必填理由。审核结果、审计与投稿人站内
-        通知同事务提交。
+        claim 接受空请求体，返回领取批次及截止时间。交回、通过及驳回须传回
+        本次领取的 claim_id，驳回另须提供 1～500 字的理由。
 
         Raises:
             Forbidden: 非管理员，返回 403。
-            NotFound: 投稿不存在，返回 404。
-            Conflict: 投稿已被处理（SUBMISSION_ALREADY_PROCESSED），或领取
-                缺失/过期/他人有效领取（SUBMISSION_LOCKED），返回 409。
-            ValidationError: reject 缺少理由或请求体不合法，返回 400。
+            NotFound: 投稿或动作不存在，返回 404。
+            Conflict: 已处理、他人已领取或当前领取失效，返回 409。
+            ValidationError: 缺少必填字段、批次格式错误或理由不合法，返回 400。
         """
         IsAdminFlag().has_permission(request, None)
+        if action == "claim":
+            validate_data(EmptyBodySerializer, request.data)
+            submission = services.claim_submission(submission_id, actor=request.user)
+            return ok(ClaimedSubmissionSerializer(submission).data)
         if action == "reject":
-            serializer = SubmissionRejectSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            services.reject_submission(
-                submission_id, actor=request.user,
-                reason=serializer.validated_data["reason"],
-            )
+            fields = validate_data(SubmissionRejectSerializer, request.data)
+            services.reject_submission(submission_id, actor=request.user, **fields)
             return ok()
-        validate_data(EmptyBodySerializer, request.data)
-        dispatch = {
-            "claim": services.claim_submission,
-            "release": services.release_submission,
-            "approve": services.approve_submission,
-        }
-        if action not in dispatch:
+        handlers = {"release": services.release_submission, "approve": services.approve_submission}
+        if action not in handlers:
             raise NotFound("动作不存在")
-        submission = dispatch[action](submission_id, actor=request.user)
+        fields = validate_data(SubmissionClaimSerializer, request.data)
+        submission = handlers[action](submission_id, actor=request.user, **fields)
         return ok(SubmissionSerializer(submission).data)

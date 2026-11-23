@@ -1,12 +1,12 @@
 # JiMeet 后端接口契约
 
-更新日期：2026-11-20
+更新日期：2026-11-23
 
 本文是前后端对接的统一接口正文。下文接口路径统一以 `/api/v1` 为前缀，不带末尾斜杠；文件路径相对项目根目录。
 
 ## 1. 接口概览
 
-当前实现 42 个方法/路径，包含受开关控制的开发登录。关闭开发登录时可用方法/路径为 41 个。另有 2 个返回 501 的 SSO 预留接口。本人删除与管理员治理删除使用独立入口。
+按 HTTP 方法与路径模板计，开发登录开启时可用 46 项，关闭时可用 45 项。四种投稿审核动作合计为一个路径模板。另有两个 SSO 预留接口返回 501。
 
 | 方法 | 路径 | 状态 |
 | --- | --- | --- |
@@ -52,7 +52,7 @@
 | GET | `/announcements` | 可用 |
 | GET | `/announcements/{id}` | 可用 |
 | POST | `/announcements` | 可用 |
-| PATCH | `/announcements/{id}` | 已关闭（405，Sprint3 起公告不可编辑） |
+| PATCH | `/announcements/{id}` | 不支持（405） |
 | DELETE | `/announcements/{id}` | 可用（本人删除） |
 | DELETE | `/admin/announcements/{id}` | 可用（治理删除） |
 | POST | `/announcement-submissions` | 可用（投稿） |
@@ -129,9 +129,9 @@
 | METHOD_NOT_ALLOWED | 405 | 路径存在，但不支持该方法 |
 | RATE_LIMITED | 429 | 注册或登录失败次数超限，或触发验证码重发冷却及发送额度，到期后可重试 |
 | SUBMISSION_LIMIT_EXCEEDED | 409 | 公告投稿数已达上限（上海自然日 5 条或同时待审 5 条，均含本次提交） |
-| SUBMISSION_LOCKED | 409 | 投稿领取冲突：他人领取中，或处理时领取缺失/过期/非本人 |
+| SUBMISSION_LOCKED | 409 | 投稿领取冲突：他人领取中，或审核时领取已交回、已到期、操作人或领取批次不匹配 |
 | SUBMISSION_ALREADY_PROCESSED | 409 | 投稿已通过或已驳回，不能重复处理 |
-| EMAIL_DELIVERY_UNAVAILABLE | 503 | 注册邮件配置或投递暂时不可用，稍后重新申请验证码 |
+| EMAIL_DELIVERY_UNAVAILABLE | 503 | 注册或登录验证码投递失败，提示“邮件发送服务暂时不可用，请稍后重试” |
 | PRIVACY_NOT_CONSENTED | 403 | 未确认个人信息处理告知，不能提交申请 |
 | SELF_APPLICATION_FORBIDDEN | 403 | 不能申请本人发布的招募 |
 | RECRUITMENT_NOT_OPEN | 409 | 当前不允许新投递 |
@@ -204,7 +204,7 @@ export default defineConfig(({ mode }) => {
 
 `sessionid` 为 HttpOnly Cookie，前端不读取、不复制到请求体或本地存储；`fetch` 使用 `credentials: 'same-origin'`。接口返回的 masked CSRF token 和当前 `csrftoken` Cookie 值均可用于请求头，但登录前的旧令牌不可继续使用。实际规则见 [Django CSRF 文档](https://docs.djangoproject.com/en/6.1/ref/csrf/)。
 
-清除 Cookie、切换浏览器或退出会话后，注册须重新发码、验码。开发登录仅用于隔离调试。
+验码返回 `account_exists: true` 时引导用户登录。仅在返回 `false` 时展示设置密码、确认密码及填写身份的注册表单。清除 Cookie、切换浏览器或退出会话后，注册须重新发码、验码。开发登录仅用于隔离调试。
 
 浏览器调用示例：
 
@@ -241,8 +241,10 @@ async function verifyRegistrationCode(email, code) {
   return api('/auth/register/verify-code', { method: 'POST', json: { email, code } });
 }
 
-async function completeRegistration({ email, password, name }) {
-  const profile = await api('/auth/register', { method: 'POST', json: { email, password, name } });
+async function completeRegistration({ email, password, password_confirm, name, role, nickname }) {
+  const profile = await api('/auth/register', {
+    method: 'POST', json: { email, password, password_confirm, name, role, nickname },
+  });
   csrfToken = (await api('/auth/csrf')).csrf_token;
   return profile;
 }
@@ -277,7 +279,7 @@ async function confirmPrivacyConsent() {
 
 请求为 `{"email":"student@tongji.edu.cn","code":"012345"}`。`code` 是六位 ASCII 数字**字符串**，保留前导零。须使用发码时的邮箱和会话。验证码自发码预约起 5 分钟有效。成功返回 HTTP 200，`data={"expires_in":600,"account_exists":false}`：`expires_in` 表示该会话自核验起 10 分钟内可完成一次注册，此时尚未创建账号或登录。
 
-验码成功后服务端才提示邮箱是否已注册：`account_exists` 为 `true` 时 `expires_in` 为 `0`，前端提示“已注册，请登录”，此时不创建账号、不自动登录已有账号。发码响应与验码失败响应均不区分是否已注册。
+验码成功后服务端才提示邮箱是否已注册：`account_exists` 为 `true` 时 `expires_in` 为 `0`，前端提示“已注册，请登录”，服务端仅在原会话中保留 10 分钟的已注册提示，不签发建号资格。此时提交建号返回 400，`data.details.email` 提示登录，超时后提示重新验证。发码响应与验码失败响应均不区分是否已注册。
 
 错误、过期、已使用或不匹配的验证码返回 400 `VALIDATION_ERROR`，详见 `data.details.code`。在匹配的有效验证码上连续输错 5 次后该码作废。核验资格由服务端保存，前端在同一会话中显示密码设置表单即可。
 
@@ -306,7 +308,7 @@ async function confirmPrivacyConsent() {
 
 ### 4.4 登录（公开，强制 CSRF）
 
-登录支持密码或验证码二选一。两接口仅接收 `application/json`，匿名请求也强制 CSRF，响应 `Cache-Control: private, no-store`。
+密码登录与验证码登录均要求邮箱域名精确为 `tongji.edu.cn`，忽略大小写。两个登录接口仅接收 `application/json`，媒体类型不受支持返回 415。匿名请求同样校验 CSRF，令牌无效返回 403。成功及错误响应均带 `Cache-Control: private, no-store`。
 
 #### 4.4.1 POST /auth/login/send-code
 
@@ -375,7 +377,7 @@ async function confirmPrivacyConsent() {
 
 ### 4.8 GET /auth/sso/login、GET /auth/sso/callback（预留）
 
-当前均返回 501，`code=INTERNAL_ERROR`、`message="预留"`、`data=null`。学校 SSO 尚未接入；当前使用邮箱密码注册登录，开发登录仅在开关启用时可用。
+当前均返回 501，`code=INTERNAL_ERROR`、`message="预留"`、`data=null`。注册须验证同济邮箱，已有账号可凭密码或邮箱验证码登录。
 
 ## 5. 招募接口
 
@@ -383,7 +385,7 @@ async function confirmPrivacyConsent() {
 
 `GET /tags` 返回 200、`data={"items":[{"id":1,"name":"计算机"}]}`。仅返回启用标签，按 `sort_order, id` 升序，不分页；已有招募引用的停用标签仍可显示名称。
 
-招募类型为：`competition`（竞赛）、`activity`（活动）、`internship`（实验室实习）。招募状态为 `open`（进行中）、`full`（已满员）、`closed`（已关闭）；删除状态由 `is_deleted` / `deleted_at` 表示。
+新建和编辑支持 `competition`（竞赛组队）、`activity`（校内活动）。历史实验室实习记录在列表、详情和申请关联摘要中均显示为 `activity`。招募状态为 `open`（进行中）、`full`（已满员）、`closed`（已关闭）；删除状态由 `is_deleted` / `deleted_at` 表示。
 
 ### 5.2 招募请求字段
 
@@ -392,8 +394,9 @@ async function confirmPrivacyConsent() {
 | 字段 | POST | PATCH / 约束 |
 | --- | --- | --- |
 | title | 必填 | 去首尾空白后 1～100 字 |
-| type | 必填 | 第 5.1 节的类型枚举 |
+| type | 必填 | `competition` 或 `activity`，提交 `internship` 返回 400 |
 | description | 必填 | 去首尾空白后 1～5000 字的纯文本，不解释为 HTML |
+| note | 可省略，默认 null | 发布者的招聘补充说明，最多 1000 字。PATCH 省略时保留原值，传 null、空串或纯空白时清空。申请人投递时的同名字段属于该次申请 |
 | tag_ids | 必填 | 非空、不重复的正整数数组；每项须为当前启用标签 ID |
 | min_headcount | 可省略，默认 null | null 或正整数，非空时须不大于 max_headcount |
 | max_headcount | 必填 | 1～200 的整数；更新后不得低于 accepted_count |
@@ -424,7 +427,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 | PublicUser | `uid`、`nickname`、`role`；不含用户数据库主键、姓名、邮箱 |
 | Tag | `id`、`name` |
 | RecruitmentSummary | `id`、`title`、`type`、`tags: Tag[]`、`min_headcount`（可空）、`max_headcount`、`accepted_count`、`status`、`is_deleted`、`deadline`、`publisher: PublicUser`、`created_at`、`updated_at` |
-| RecruitmentDetail | Summary 全部字段，加 `description`、`closed_at` / `full_at` / `close_reason`（可空）、`my_application`（可空）、`permissions`；仅发布者另有 `application_counts` |
+| RecruitmentDetail | Summary 全部字段，加 `description`、`note`（可空）、`closed_at` / `full_at` / `close_reason`（可空）、`my_application`（可空）、`permissions`；仅发布者另有 `application_counts` |
 
 `my_application` 为当前用户对该招募最近一次申请的 `{id, status}`，从未申请则为 null；撤回重投保留旧记录，但这里返回最新记录。长期记录不因固定期限隐藏（见 9.1）。`application_counts` 包含五种申请状态的计数；按现存记录统计，物理清理（预留）执行后仅使用已保存的聚合值，不重建明细。
 
@@ -450,6 +453,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
   "created_at": "2026-10-26T09:00:00+08:00",
   "updated_at": "2026-10-26T09:00:00+08:00",
   "description": "招募熟悉 Python 的队员共同完成竞赛项目。",
+  "note": null,
   "closed_at": null,
   "full_at": null,
   "close_reason": null,
@@ -479,13 +483,13 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 | DELETE /recruitments/{id} | **本人删除**：仅发布者身份，受进行中且未删除的状态窗口限制；即使发布者拥有管理员标记也不绕过限制；JSON `reason` 可选（1～500 字） | 200，null |
 | DELETE /admin/recruitments/{id} | **治理删除**：当前管理员可处置任意未删除状态的招聘；JSON `reason` 必填 1～500 字；与本人删除使用不同操作入口 | 200，null |
 
-`q` 对标题或描述做不区分大小写的包含搜索，去首尾空白，空串不筛选。`type/status` 为单一枚举，`tag` 为单个正整数标签 ID，多个条件取交集。无匹配标签正常返回空列表。排序为有效进行中在前，其余状态在后；各组按 `created_at DESC, id DESC` 稳定排序。类型、状态或标签参数空值/格式非法返回 400。
+`q` 对标题或描述做不区分大小写的包含搜索，去首尾空白，空串不筛选。`type/status` 为单一枚举，`tag` 为单个正整数标签 ID，多个条件取交集。无匹配标签正常返回空列表。公开列表和本人列表均按有效状态分为进行中、已满员、已关闭三组，依次展示。组内按 `created_at DESC, id DESC` 稳定排序。`type=activity` 包含历史实验室实习，兼容筛选 `type=internship` 仅匹配这些历史记录，返回的类型仍是 `activity`。类型、状态或标签参数空值/格式非法返回 400。
 
 列表筛选、排序、详情的 `status` 使用同一时刻的有效状态：已满员优先，其余原 open 且到截止的表现为 closed。详情相应使用截止时间作为有效 `closed_at`，不把任务延迟当作仍可投递。写操作仍先调用既有补执行逻辑，再在锁内验证实际状态。
 
 对象可见但非发布者编辑/关闭为 403；窗口不允许为 409 `RECRUITMENT_NOT_EDITABLE`。人数上限低于已接受人数为 409 `HEADCOUNT_BELOW_ACCEPTED`；等于时在同一事务进入 full 并拒绝其余处理中申请。重复删除已删除对象为 404，重复关闭已关闭对象为 409，不重复生成通知。
 
-在权限与操作窗口有效的前提下，PATCH 的内容和标签集合与当前值相同时返回当前详情，不更新 `updated_at` 或生成通知；标签顺序变化不视为内容变化。相同内容的并发请求在锁内只产生一次有效修改。
+在权限与操作窗口有效的前提下，PATCH 的内容和标签集合与当前值相同时返回当前详情，不更新 `updated_at` 或生成通知；标签顺序变化、历史实习记录仅回传其展示类型 `activity` 均不视为内容变化。相同内容的并发请求在锁内只产生一次有效修改。
 
 软删除在同一事务内将 `deleted_at` 置为删除时间，补执行后仍为 `processing/accepted` 的申请转为 `invalid`，并将 `accepted_count` 归零。已拒绝、已撤回状态不变，招聘原业务状态及 `closed_at/full_at` 保留；历史接受结果由状态变更记录追溯，不因人数归零重新开放，不提供恢复入口。
 
@@ -499,7 +503,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 | 数据结构 | 字段 |
 | --- | --- |
-| RecruitmentReference | `id`、`title`、`type`、`status`、`is_deleted`、`deleted_at`（可空）；用于申请历史，不能据此绕过已删除招募详情的访问限制 |
+| RecruitmentReference | `id`、`title`、`type`、`status`、`is_deleted`、`deleted_at`（可空）。`type` 使用第 5.1 节的展示类型，申请历史可保留已删除招聘的摘要 |
 | ApplicationSummary | `id`、`recruitment: RecruitmentReference`、`applicant: PublicUser`、`status`、`created_at`、`updated_at`、`decided_at`（可空）、`permissions`；发布者另按权限获得 `applicant.name`、`publisher_mark`、`has_unseen_update` |
 | ApplicationDetail | Summary 全部字段，加按权限裁剪的 `note`（可空）、`resume: {name, size, type}`；size 为字节数，type 为 pdf/doc/docx |
 
@@ -625,7 +629,7 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 | POST /notifications/{id}/read | 空请求体或 `{}`，只能修改自己的通知；重复调用保持已读 | Notification |
 | POST /notifications/read-all | 空请求体或 `{}`，只更新当前用户当前可见的未读通知 | `{"updated_count":0}`，返回本次实际更新条数 |
 
-无权读取或修改他人的通知返回 404；`is_read` 空值、数字或其他字符串为 400。生成、列表、未读数和已读操作均不按固定期限过滤通知。读取和已读采用相同的接收人及目标关联权限：申请关联须匹配招聘且接收人为申请人或发布者；纯招聘通知限发布者；公告删除与审核通知限发布人或投稿人；无关联旧通知仍仅限其接收人。管理员无额外读取权。标记全部已读仅更新该次数据库语句可见的未读记录，之后到达的通知保持未读。
+无权读取或修改他人的通知返回 404；`is_read` 空值、数字或其他字符串为 400。生成、列表、未读数和已读操作均不按固定期限过滤通知。读取和已读采用相同的接收人及目标关联权限：申请关联须匹配招聘且接收人为申请人或发布者；纯招聘通知限发布者；投稿获批通知限投稿人，公告删除通知限发布人和投稿人，同一人只收一条；无关联旧通知仍仅限其接收人。管理员无额外读取权。标记全部已读仅更新该次数据库语句可见的未读记录，之后到达的通知保持未读。
 
 通知类型及接收规则如下，创建时由统一业务服务校验关联与接收人：
 
@@ -657,7 +661,7 @@ Notification 对象为 `id`、`type`、`title`、`content`、`recruitment_id`（
 
 Announcement 对象字段：`id`、`title`、`content`、`time_kind`（`deadline` 报名截止时间 / `event` 活动时间）、`event_at`、`link_url`（可空）、`recruitment_id`（可空）、`recruitment_available`（布尔，关联招募当前是否可用）、`is_pinned`（只读）、`created_at`、`updated_at`、`author`（PublicUser：`uid`、`nickname`、`role`）与 `permissions`。不返回 `real_id`、邮箱、投稿人等内部信息。
 
-`permissions` 区分两种删除入口：`can_edit` 恒为 `false`（Sprint3 起公告不可编辑，编辑入口已收回）、`can_delete`（当前管理员且为作者，本人删除入口）、`can_govern_delete`（当前管理员，治理删除入口）。写请求仍由服务端重新鉴权。
+`permissions` 区分两种删除入口：`can_edit` 恒为 `false`（公告不可编辑）、`can_delete`（当前管理员且为作者，本人删除入口）、`can_govern_delete`（当前管理员，治理删除入口）。写请求仍由服务端重新鉴权。
 
 字段约束（去首尾空白后计数）：
 
@@ -677,36 +681,37 @@ Announcement 对象字段：`id`、`title`、`content`、`time_kind`（`deadline
 | GET /announcements | 已登录 | 仅未删除；按 `created_at DESC, id DESC` 稳定分页（直接发布与审核通过按实际发布时间倒序） | 分页 Announcement |
 | GET /announcements/{id} | 已登录 | 不存在或已删除为 404 | Announcement |
 | POST /announcements | 当前 `is_admin` | 管理员直接发布；字段校验如上 | 201，Announcement |
-| PATCH /announcements/{id} | —— | **已关闭**：Sprint3 起公告不可编辑（含管理员与后台），一律 405 | —— |
+| PATCH /announcements/{id} | —— | 已登录用户请求编辑返回 405，Django 公告后台只读 | —— |
 | DELETE /announcements/{id} | 当前 `is_admin` 且为作者 | **本人删除**：软删除，不需要原因；删除结果通知发布人与投稿人（`announcement_removed`） | 200，null |
 | DELETE /admin/announcements/{id} | 当前 `is_admin` | **治理删除**：JSON `reason` 必填 1～500 字；同一事务完成软删除、审计与删除结果通知（`announcement_admin_removed`，含原因） | 200，null |
 
 ### 8.2 投稿与审核
 
-Submission 对象（本人视图）字段：`id`、`title`、`content`、`time_kind`、`event_at`、`link_url`（可空）、`status`（`pending`/`approved`/`rejected`）、`submitted_at`、`reviewed_at`（可空）、`reject_reason`（可空）、`announcement_id`（可空，通过后生成的公告）。待审池视图另含 `submitter`（PublicUser）、`claimed_by`（PublicUser，可空）、`claimed_until`（可空）与 `overdue`（布尔，超 24 小时未处理）。
+普通用户提交 `title`、`content`、`time_kind`、`event_at` 和可选的 `link_url`，校验规则同 8.1。提交后不能编辑或撤回。被驳回后可重新填写提交，按新投稿计数。
 
-投稿内容字段与公告同口径（title、content、time_kind、event_at、link_url），提交后**不能改稿、撤回**。
+| 响应对象 | 字段 |
+| --- | --- |
+| 投稿（Submission） | `id`、`title`、`content`、`time_kind`、`event_at`、`link_url`、`status`、`submitted_at`、`reviewed_at`、`reject_reason`、`announcement_id`。状态为 `pending`、`approved` 或 `rejected`，链接、审核时间、驳回理由和生成的公告 ID 均可为空 |
+| 待审池条目 | `id`、`title`、`content`、`time_kind`、`event_at`、`link_url`、`submitted_at`、`submitter`、`claimed_by`、`claimed_until`、`overdue`。投稿人与领取人使用 PublicUser，领取人及截止时间可为空。截止时间与当前时间相等时领取已到期 |
+| 领取成功 | Submission 的全部字段，另有 `claim_id`（UUID 字符串）和 `claimed_until`（带时区的截止时间）。客户端保存本次领取返回的两个值 |
 
-| 接口 | 权限 | 输入与行为 | 成功 data |
-| --- | --- | --- | --- |
-| POST /announcement-submissions | 已登录（普通用户与管理员均可投稿） | 提交待审投稿；上海自然日每人最多 5 条、同时待审最多 5 条，均含本次提交；驳回后再投按新投稿计数 | 201，Submission |
-| GET /me/announcement-submissions | 已登录 | 本人全部投稿，按提交时间倒序分页；含驳回理由 | 分页 Submission |
-| GET /admin/announcement-submissions | 当前 `is_admin` | 共享待审池：仅 `pending`，`total` 为待审总数；超 24 小时未处理优先并带 `overdue` 标记，组内按提交时间、编号升序 | 分页 Submission（待审视图） |
-| POST /admin/announcement-submissions/{id}/claim | 当前 `is_admin` | 领取审核权 15 分钟；他人有效领取期间 409 `SUBMISSION_LOCKED`；领取或交回可重复幂等语义外的冲突按错误返回 | 200，Submission |
-| POST /admin/announcement-submissions/{id}/release | 当前 `is_admin` | 仅领取人主动交回；交回后旧领取记录失效 | 200，Submission |
-| POST /admin/announcement-submissions/{id}/approve | 当前 `is_admin` | **审核通过**：按投稿原文生成公告（发布人记审核管理员、投稿人另记）；须持有有效领取 | 200，Submission |
-| POST /admin/announcement-submissions/{id}/reject | 当前 `is_admin` | **驳回**：JSON `reason` 必填 1～500 字；须持有有效领取 | 200，null |
+| 接口 | 权限与输入 | 成功 data |
+| --- | --- | --- |
+| POST /announcement-submissions | 普通用户。上海自然日最多提交 5 条，同时待审最多 5 条，均含本次。当前管理员走 `POST /announcements` 直接发布，在此投稿返回 403 | 201，Submission |
+| GET /me/announcement-submissions | 登录用户查询本人全部投稿，按提交时间、编号倒序。权限变化后仍可查本人历史投稿 | 分页 Submission |
+| GET /admin/announcement-submissions | 当前管理员共享待审池。仅列待审稿，`total` 为待审总数。超过 24 小时者优先，组内按提交时间、编号升序 | 分页待审池条目 |
+| POST /admin/announcement-submissions/{id}/claim | 当前管理员提交 `{}` 领取 15 分钟。同一人在有效期内重试返回原批次和原截止时间 | 200，领取成功对象 |
+| POST /admin/announcement-submissions/{id}/release | 当前领取人提交 `{"claim_id":"…"}`，交回本次领取 | 200，Submission |
+| POST /admin/announcement-submissions/{id}/approve | 当前领取人提交 `{"claim_id":"…"}`，按投稿原文发布，公开署名为审核管理员 | 200，Submission，含生成的 `announcement_id` |
+| POST /admin/announcement-submissions/{id}/reject | 当前领取人提交 `{"claim_id":"…","reason":"驳回理由"}`，理由须为 1～500 字 | 200，null |
 
-审核行为与错误口径：
+交回或到期后重新领取会得到新批次，即使两次领取人相同。操作时须原样传回当前 `claim_id`。缺少或传入无效格式返回 400；在待审稿上使用过期、已交回、他人或旧批次返回 409 `SUBMISSION_LOCKED`。已处理投稿收到格式正确的重复审核请求返回 409 `SUBMISSION_ALREADY_PROCESSED`。普通用户访问待审池或审核操作返回 403。
 
-- 通过、驳回在行锁内复核当前管理员权限、领取人、领取期限与投稿状态；每次成功审核只产生一次业务结果及对应审计（`announcement_publish`、`announcement_submission_approve`/`announcement_submission_reject`）与投稿人站内通知。重复处理返回 409 `SUBMISSION_ALREADY_PROCESSED`；领取缺失、过期或非本人返回 409 `SUBMISSION_LOCKED`（到期或交回后原领取人不能再凭旧领取记录处理）。
-- 通过生成的公告按实际发布时间进入列表倒序；投稿人身份只记在投稿与审核记录，不进入公告对外字段。历史直接发布不补造投稿或审核记录。
-- 驳回通知（`announcement_submission_rejected`）包含投稿名称与驳回理由，无目标关联；通过通知（`announcement_submission_approved`）关联生成的公告。
-- 任何用户仅能读取本人投稿及已公开公告；普通用户不能访问待审池或审核动作（403）。
+通过或驳回时，审核结果、审计及投稿人的站内通知同事务提交。通过通知关联新公告，驳回通知包含投稿名称和理由。已发布公告按实际发布时间进入列表，对外仅显示发布管理员。
 
 ### 8.3 通用行为与错误口径
 
-- 未登录 401；非作者本人删除、非管理员写入或审核 403；对象不存在或已删除 404（含重复删除：不重复写审计与通知）；不支持的方法（如对 `/announcements` 的 PATCH/DELETE、对 `/announcement-submissions` 的 PATCH）405 `METHOD_NOT_ALLOWED`。
+- 未登录 401；本人删除时不是作者、普通用户直接发布公告或执行治理及审核操作返回 403；对象不存在或已删除 404（含重复删除：不重复写审计与通知）；不支持的方法（如对 `/announcements` 的 PATCH/DELETE、对 `/announcement-submissions` 的 PATCH）405 `METHOD_NOT_ALLOWED`。
 - 写操作在行锁内重新读取对象并复核状态与权限；删除并发仅一次业务结果，后到请求按 404 处理，对象不会复活。
 - 管理员权限按请求实时读取；作者被撤销管理员权限后，发布、删除与治理删除全部拒绝（含其旧会话）。
 - 每次发布与删除在同一事务内写入审计（`target_type=announcement`）；治理删除的 `reason` 写入审计的 `reason`。**所有公告删除（本人删除与治理删除）均通知发布人与投稿人，两者相同只通知一次**；正常发布不产生站内通知或邮件。

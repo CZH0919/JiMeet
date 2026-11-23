@@ -14,7 +14,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts import ratelimit, verification
-from apps.accounts.models import User
 from apps.accounts.serializers import (
     DevLoginSerializer,
     LoginSerializer,
@@ -102,8 +101,8 @@ class CsrfView(APIView):
         return ok({"csrf_token": get_token(request._request)})
 
 
-class RegistrationAPIView(APIView):
-    """公开注册接口的 JSON、匿名 CSRF 校验及响应缓存策略。"""
+class EmailAuthAPIView(APIView):
+    """公开邮箱认证接口的 JSON、匿名 CSRF 校验及响应缓存策略。"""
 
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -121,7 +120,7 @@ class RegistrationAPIView(APIView):
         return response
 
 
-class RegistrationCodeView(RegistrationAPIView):
+class RegistrationCodeView(EmailAuthAPIView):
     """公开发码入口，受理响应不区分邮箱是否已注册。"""
 
     def post(self, request):
@@ -137,11 +136,8 @@ class RegistrationCodeView(RegistrationAPIView):
         })
 
 
-class VerifyRegistrationCodeView(RegistrationAPIView):
-    """公开验码入口。成功后仅在原会话中授予该邮箱的一次性注册资格。
-
-    仅在验码成功后提示邮箱是否已注册，此前发码与验码响应一律不区分。
-    """
+class VerifyRegistrationCodeView(EmailAuthAPIView):
+    """验证原会话的注册验证码。新邮箱取得一次建号资格，已有账号仅返回登录提示。"""
 
     def post(self, request):
         """接收 email 和六位字符串 code，返回资格有效秒数及是否已注册。
@@ -151,26 +147,23 @@ class VerifyRegistrationCodeView(RegistrationAPIView):
         """
         serializer = VerifyRegistrationCodeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        verification.verify_registration_code(
+        account_exists = verification.verify_registration_code(
             **serializer.validated_data, session_key=verification.registration_session_key(request._request.session),
         )
-        account_exists = User.objects.filter(
-            email__iexact=serializer.validated_data["email"]
-        ).exists()
         return ok({
             "expires_in": 0 if account_exists else int(verification.GRANT_TTL.total_seconds()),
             "account_exists": account_exists,
         })
 
 
-class RegisterView(RegistrationAPIView):
+class RegisterView(EmailAuthAPIView):
     """持已核验的会话注册普通账号并建立登录态。"""
 
     def post(self, request):
         """POST /api/v1/auth/register：注册普通账号并建立会话。
 
         Args:
-            request: JSON 必填 email、password、name，可选 nickname、role；
+            request: JSON 必填 email、password、password_confirm、name、role，可选 nickname；
                 须携带已核验该邮箱的会话和匹配的 CSRF 令牌。
 
         Returns:
@@ -191,7 +184,7 @@ class RegisterView(RegistrationAPIView):
         return created(profile_data(user))
 
 
-class LoginSendCodeView(RegistrationAPIView):
+class LoginSendCodeView(EmailAuthAPIView):
     """公开登录发码入口，受理响应不区分邮箱是否已注册。"""
 
     def post(self, request):
@@ -211,11 +204,8 @@ class LoginSendCodeView(RegistrationAPIView):
         })
 
 
-class LoginView(APIView):
-    """邮箱登录公开入口，密码或验证码二选一；匿名请求强制 CSRF。"""
-
-    authentication_classes = []
-    permission_classes = [AllowAny]
+class LoginView(EmailAuthAPIView):
+    """邮箱登录公开入口，密码或验证码二选一，匿名请求强制校验 CSRF。"""
 
     def post(self, request):
         """POST /api/v1/auth/login：凭邮箱加密码或邮箱加验证码建立会话。
@@ -239,7 +229,6 @@ class LoginView(APIView):
             BizError: 凭据不合法 401 AUTH_FAILED；失败限流 429 RATE_LIMITED。
             Forbidden: 账号已停用，返回 403。
         """
-        SessionAuthentication().enforce_csrf(request._request)
         data = _validate_auth_payload(request, LoginSerializer, kind=ratelimit.KIND_LOGIN)
         session_key = verification.registration_session_key(request._request.session)
         if "code" in data:
@@ -250,9 +239,7 @@ class LoginView(APIView):
         else:
             user = login_with_password(email=data["email"], password=data["password"], ip=_client_ip(request))
             login(request._request, user)
-        response = ok(profile_data(user))
-        response["Cache-Control"] = "private, no-store"
-        return response
+        return ok(profile_data(user))
 
 
 class DevLoginView(APIView):
