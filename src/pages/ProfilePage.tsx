@@ -1,4 +1,4 @@
-import { Briefcase, Inbox, Pencil, Plus, Send, ShieldCheck, Trash2, Users } from 'lucide-react';
+import { Briefcase, Download, FileText, Inbox, Pencil, Plus, Send, ShieldCheck, Trash2, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -17,6 +17,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Field, Input } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { EditApplicationDialog } from '@/components/application/EditApplicationDialog';
+import { ResumePreview } from '@/components/application/ResumePreview';
 import { EmptyState, ErrorState, PageLoader } from '@/components/ui/Feedback';
 import { toast } from '@/stores/toast';
 
@@ -59,6 +60,7 @@ export function ProfilePage() {
 
   const [withdrawTarget, setWithdrawTarget] = useState<Application | null>(null);
   const [editTarget, setEditTarget] = useState<Application | null>(null);
+  const [previewTarget, setPreviewTarget] = useState<Application | null>(null);
   const [busy, setBusy] = useState(false);
   const [nickOpen, setNickOpen] = useState(false);
   const [nickname, setNickname] = useState(user?.name ?? '');
@@ -237,6 +239,7 @@ export function ProfilePage() {
             apps={myApps.data ?? []}
             onWithdraw={setWithdrawTarget}
             onEdit={(a) => void openEdit(a)}
+            onPreview={setPreviewTarget}
             reload={myApps.reload}
           />
         )}
@@ -275,7 +278,7 @@ export function ProfilePage() {
           </>
         }
       >
-        <Field label="昵称" required error={nickErr ?? undefined} hint="1～32 字，展示给其他用户；姓名与邮箱不可在此修改">
+        <Field label="昵称" required error={nickErr ?? undefined} hint="1～32 字，展示给其他用户">
           <Input
             value={nickname}
             onChange={(e) => {
@@ -286,6 +289,28 @@ export function ProfilePage() {
             invalid={!!nickErr}
           />
         </Field>
+      </Modal>
+
+      <Modal
+        open={!!previewTarget && !!previewTarget.resume}
+        title="我的简历"
+        description={previewTarget?.resume?.fileName}
+        onClose={() => setPreviewTarget(null)}
+        width="max-w-3xl"
+        bodyClassName="max-h-[76vh] overflow-y-auto px-6 py-5"
+        footer={
+          <Button variant="secondary" onClick={() => setPreviewTarget(null)}>
+            关闭
+          </Button>
+        }
+      >
+        {previewTarget?.resume && (
+          <ResumePreview
+            applicationId={previewTarget.id}
+            file={previewTarget.resume}
+            canDownload={previewTarget.canDownloadResume}
+          />
+        )}
       </Modal>
     </div>
   );
@@ -466,6 +491,7 @@ function MyApplicationsTab({
   apps,
   onWithdraw,
   onEdit,
+  onPreview,
   reload,
 }: {
   loading: boolean;
@@ -473,6 +499,7 @@ function MyApplicationsTab({
   apps: Application[];
   onWithdraw: (a: Application) => void;
   onEdit: (a: Application) => void;
+  onPreview: (a: Application) => void;
   reload: () => void;
 }) {
   if (loading) return <PageLoader />;
@@ -514,10 +541,15 @@ function MyApplicationsTab({
               {app.decidedAt && ` · 处理于 ${formatDateTime(app.decidedAt)}`}
             </p>
             {app.status === 'invalid' && (
-              <p className="mt-1 text-xs text-muted">该招聘已被删除，申请已失效；你可继续下载本人简历。</p>
+              <p className="mt-1 text-xs text-muted">该招聘已被删除，申请已失效；你仍可在线上查看或下载本人简历。</p>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {app.resume && (
+              <Button size="sm" variant="secondary" onClick={() => onPreview(app)}>
+                <FileText size={14} /> 查看简历
+              </Button>
+            )}
             {app.canModify && (
               <Button size="sm" variant="secondary" onClick={() => onEdit(app)}>
                 <Pencil size={14} /> 修改申请
@@ -531,7 +563,7 @@ function MyApplicationsTab({
             {app.canDownloadResume && app.resume && (
               <Button
                 size="sm"
-                variant="secondary"
+                variant="ghost"
                 onClick={async () => {
                   try {
                     await repo.applications.downloadResume(app.id);
@@ -540,7 +572,7 @@ function MyApplicationsTab({
                   }
                 }}
               >
-                下载简历
+                <Download size={14} /> 下载
               </Button>
             )}
             {!app.canModify && !app.canWithdraw && (

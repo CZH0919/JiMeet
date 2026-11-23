@@ -1,3 +1,5 @@
+import { canonicalPasswordMessage } from '@/domain/validation';
+
 /**
  * 后端 HTTP 客户端：统一 `/api/v1` 前缀、JSON 信封、CSRF 会话流程。
  * 前端通过 Vite 开发代理转发到后端，不在页面硬编码后端地址（见 vite.config.ts）。
@@ -54,16 +56,62 @@ export function describeCode(code: string): string {
   return CODE_MESSAGES[code] ?? '请求失败，请稍后重试';
 }
 
-function describeError(code: string, message: string, details?: unknown): string {
-  let text = message && message.trim() ? message.trim() : describeCode(code);
-  if (details && typeof details === 'object' && !Array.isArray(details)) {
-    const parts = Object.values(details as Record<string, unknown>).map((v) => {
-      const val = Array.isArray(v) ? v.join('；') : String(v);
-      return `${val}`;
-    });
-    if (parts.length > 0) text = `${text}（${parts.join('；')}）`;
+/** 后端 details 里的字段级说明 → 文本数组，密码类原文先归一到前端统一文案 */
+function detailMessages(details: unknown): string[] {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return [];
+  const out: string[] = [];
+  for (const value of Object.values(details as Record<string, unknown>)) {
+    const text = (Array.isArray(value) ? value.join('；') : String(value ?? '')).trim();
+    if (!text) continue;
+    out.push(canonicalPasswordMessage(text) ?? text);
   }
-  return text;
+  return out;
+}
+
+/** 简历文件校验失败时 `data.details.reason` 的取值 → 可读说明 */
+const RESUME_REASON_MESSAGES: Record<string, string> = {
+  type: '简历仅支持 PDF / DOC / DOCX 格式',
+  size: '简历文件不得超过 10 MB',
+  signature: '简历文件内容与扩展名不符，请勿直接修改扩展名',
+};
+
+/**
+ * 错误文案组装：
+ * 校验类错误直接给出具体原因，不再拼成「参数校验失败（这个密码太常见了。）」；
+ * 业务类错误保留后端的具体说明，并在有字段明细时附在后面。
+ */
+function describeError(code: string, message: string, details?: unknown): string {
+  if (code === 'INVALID_RESUME_FILE' && details && typeof details === 'object' && !Array.isArray(details)) {
+    const reason = (details as Record<string, unknown>).reason;
+    if (typeof reason === 'string' && RESUME_REASON_MESSAGES[reason]) return RESUME_REASON_MESSAGES[reason];
+  }
+
+  const own = message.trim();
+  const canonical = own ? canonicalPasswordMessage(own) : null;
+  const fields = detailMessages(details);
+
+  if (code === 'VALIDATION_ERROR') {
+    if (canonical) return canonical;
+    if (fields.length > 0) return fields.join('；');
+    if (own && own !== CODE_MESSAGES.VALIDATION_ERROR) return own;
+    return '请检查填写内容后重试';
+  }
+
+  const base = canonical ?? (own || describeCode(code));
+  return fields.length > 0 ? `${base}（${fields.join('；')}）` : base;
+}
+
+/** 后端字段级错误（`data.details`）→ 表单字段错误，便于把提示直接落到输入框下方 */
+export function fieldErrorsFrom(error: unknown): Record<string, string> {
+  if (!(error instanceof ApiError) || !error.details) return {};
+  if (typeof error.details !== 'object' || Array.isArray(error.details)) return {};
+  const out: Record<string, string> = {};
+  for (const [field, value] of Object.entries(error.details as Record<string, unknown>)) {
+    const text = (Array.isArray(value) ? value.join('；') : String(value ?? '')).trim();
+    if (!text) continue;
+    out[field] = canonicalPasswordMessage(text) ?? text;
+  }
+  return out;
 }
 
 interface RequestOptions {
@@ -182,13 +230,31 @@ export async function fetchCsrf(): Promise<string> {
   return data.csrf_token;
 }
 
-/** 浏览器触发简历下载（GET，无需 CSRF），失败抛 ApiError */
-export async function downloadResumeFile(applicationId: string): Promise<void> {
-  const url = `${API_BASE}/applications/${applicationId}/resume`;
-  const response = await fetch(url, { method: 'GET', credentials: 'same-origin' });
+/**
+ * 取简历文件流（GET，无需 CSRF）。
+ * 在线预览与下载共用同一鉴权接口：后端按 `can_download_resume` 校验，
+ * 预览不会额外放开权限，也不会产生公开链接。
+ */
+export async function fetchResumeResponse(applicationId: string): Promise<Response> {
+  const response = await fetch(`${API_BASE}/applications/${applicationId}/resume`, {
+    method: 'GET',
+    credentials: 'same-origin',
+  });
   if (!response.ok) {
     throw await parseError(response);
   }
+  return response;
+}
+
+/** 简历内容 → Blob（用于在线预览，不落盘、不产生可分享链接） */
+export async function fetchResumeBlob(applicationId: string): Promise<Blob> {
+  const response = await fetchResumeResponse(applicationId);
+  return response.blob();
+}
+
+/** 浏览器触发简历下载（GET，无需 CSRF），失败抛 ApiError */
+export async function downloadResumeFile(applicationId: string): Promise<void> {
+  const response = await fetchResumeResponse(applicationId);
   const blob = await response.blob();
   const cd = response.headers.get('Content-Disposition') ?? '';
   const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);

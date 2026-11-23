@@ -8,11 +8,11 @@ import { fetchAllPages } from '@/data/fetchAll';
 import { useAsync } from '@/features/useAsync';
 import { formatDateTime, formatRelative } from '@/domain/format';
 import { APPLICATION_STATUS_LABEL, ROLE_LABEL } from '@/domain/labels';
-import { fileSizeLabel } from '@/domain/validation';
 import { ApplicationStatusBadge } from '@/components/ui/StatusBadge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState, ErrorState, InfoBanner, PageLoader } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
+import { ResumePreview } from '@/components/application/ResumePreview';
 import { toast } from '@/stores/toast';
 
 const STATUS_TABS: { key: ApplicationStatus | 'all'; label: string }[] = [
@@ -23,6 +23,8 @@ const STATUS_TABS: { key: ApplicationStatus | 'all'; label: string }[] = [
   { key: 'withdrawn', label: APPLICATION_STATUS_LABEL.withdrawn },
   { key: 'invalid', label: APPLICATION_STATUS_LABEL.invalid },
 ];
+
+type Action = 'accept' | 'hold' | 'unhold' | 'reject';
 
 export function JobApplicationsPage() {
   const { id } = useParams<{ id: string }>();
@@ -40,9 +42,9 @@ export function JobApplicationsPage() {
     [id, status],
   );
 
-  const [preview, setPreview] = useState<Application | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Application | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [busyAction, setBusyAction] = useState<Action | null>(null);
 
   if (job.loading || apps.loading) return <PageLoader />;
   if (job.error) return <ErrorState message={job.error} onRetry={job.reload} />;
@@ -56,45 +58,46 @@ export function JobApplicationsPage() {
     await Promise.all([job.reload(), apps.reload()]);
   };
 
-  const mark = async (app: Application, action: 'accept' | 'hold' | 'unhold' | 'reject') => {
-    setBusyId(app.id);
+  const openDetail = async (app: Application) => {
+    setDetailLoading(true);
     try {
-      await repo.applications.mark(app.id, action);
-      if (action === 'accept') toast.success('已确认该申请，申请人将收到站内通知');
-      else if (action === 'reject') toast.success('已拒绝该申请，申请人将收到站内通知');
-      else if (action === 'hold') toast.success('已暂留（状态仍为处理中，申请人不可见）');
-      else toast.success('已取消暂留');
-      await refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const openPreview = async (app: Application) => {
-    setPreviewLoading(true);
-    try {
-      const detail = await repo.applications.detail(app.id);
-      setPreview(detail);
+      const loaded = await repo.applications.detail(app.id);
+      setDetail(loaded);
       // 发布者查看后确认「已修改」已阅（用刚读到的 updated_at 做版本比较）
-      if (detail.modified) {
-        await repo.applications.clearModified(detail.id, detail.updatedAt);
-        apps.reload();
+      if (loaded.modified) {
+        await repo.applications.clearModified(loaded.id, loaded.updatedAt);
+        void apps.reload();
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '加载申请详情失败');
     } finally {
-      setPreviewLoading(false);
+      setDetailLoading(false);
     }
   };
 
-  const download = async () => {
-    if (!preview) return;
+  const mark = async (action: Action) => {
+    if (!detail) return;
+    setBusyAction(action);
     try {
-      await repo.applications.downloadResume(preview.id);
+      const updated = await repo.applications.mark(detail.id, action);
+      if (action === 'accept') {
+        toast.success('已确认该申请，申请人将收到站内通知');
+        setDetail(null);
+      } else if (action === 'reject') {
+        toast.success('已拒绝该申请，申请人将收到站内通知');
+        setDetail(null);
+      } else if (action === 'hold') {
+        toast.success('已暂留（状态仍为处理中，申请人不可见）');
+        setDetail({ ...detail, publisherMark: 'hold', ...preserveDetail(updated) });
+      } else {
+        toast.success('已取消暂留');
+        setDetail({ ...detail, publisherMark: 'none', ...preserveDetail(updated) });
+      }
+      await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '下载失败');
+      toast.error(err instanceof Error ? err.message : '操作失败');
+    } finally {
+      setBusyAction(null);
     }
   };
 
@@ -116,7 +119,7 @@ export function JobApplicationsPage() {
 
       <div className="mt-4">
         <InfoBanner>
-          确认与拒绝后不可撤销，系统会通知申请人；暂留仅发布者可见。
+          查看简历后可直接处理；确认与拒绝不可撤销，并会通知申请人；暂留仅发布者可见。
           {full && ' 当前已满员，无法再确认新的申请。'}
         </InfoBanner>
       </div>
@@ -143,66 +146,94 @@ export function JobApplicationsPage() {
           <EmptyState title="该分类下暂无申请" />
         ) : (
           apps.data?.map((app) => (
-            <ApplicationRow
-              key={app.id}
-              app={app}
-              full={full}
-              busy={busyId === app.id}
-              onMark={(a) => void mark(app, a)}
-              onPreview={() => void openPreview(app)}
-            />
+            <ApplicationRow key={app.id} app={app} onOpen={() => void openDetail(app)} />
           ))
         )}
       </div>
 
       <Modal
-        open={!!preview || previewLoading}
+        open={!!detail || detailLoading}
         title="申请详情"
-        onClose={() => setPreview(null)}
-        width="max-w-xl"
+        description={detail ? `${detail.applicant.name} · ${ROLE_LABEL[detail.applicant.role]}` : undefined}
+        onClose={() => setDetail(null)}
+        width="max-w-3xl"
+        bodyClassName="max-h-[76vh] overflow-y-auto px-6 py-5"
+        footer={
+          detail ? (
+            <>
+              <Button variant="secondary" onClick={() => setDetail(null)} disabled={!!busyAction}>
+                关闭
+              </Button>
+              {detail.status === 'processing' && detail.canProcess && (
+                <>
+                  <Button
+                    variant="secondary"
+                    disabled={!!busyAction}
+                    loading={busyAction === 'hold' || busyAction === 'unhold'}
+                    onClick={() => void mark(detail.publisherMark === 'hold' ? 'unhold' : 'hold')}
+                  >
+                    {detail.publisherMark === 'hold' ? <RotateCcw size={14} /> : <Minus size={14} />}
+                    {detail.publisherMark === 'hold' ? '取消暂留' : '暂留'}
+                  </Button>
+                  <Button
+                    variant="danger-outline"
+                    disabled={!!busyAction}
+                    loading={busyAction === 'reject'}
+                    onClick={() => void mark('reject')}
+                  >
+                    <X size={14} /> 拒绝
+                  </Button>
+                  <Button
+                    variant="primary"
+                    disabled={!!busyAction || full}
+                    loading={busyAction === 'accept'}
+                    title={full ? '已满员，无法确认' : '确认该申请'}
+                    onClick={() => void mark('accept')}
+                  >
+                    <Check size={14} /> 确认
+                  </Button>
+                </>
+              )}
+            </>
+          ) : null
+        }
       >
-        {previewLoading && !preview ? (
-          <p className="py-6 text-center text-sm text-muted">加载中…</p>
-        ) : preview ? (
+        {detailLoading && !detail ? (
+          <p className="py-10 text-center text-sm text-muted">加载中…</p>
+        ) : detail ? (
           <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-ink">
-                {preview.applicant.name} · {ROLE_LABEL[preview.applicant.role]}
+            <div className="flex flex-wrap items-center gap-2">
+              <ApplicationStatusBadge status={detail.status} />
+              {detail.status === 'processing' && detail.publisherMark === 'hold' && (
+                <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs text-warning">暂留</span>
+              )}
+              {detail.modified && detail.status === 'processing' && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-warning-soft px-2 py-0.5 text-xs text-warning">
+                  <span className="h-1.5 w-1.5 rounded-full bg-warning" /> 已修改
+                </span>
+              )}
+              <span className="text-xs text-ink2">
+                提交于 {formatDateTime(detail.createdAt)} · 更新于 {formatDateTime(detail.updatedAt)}
               </span>
-              <ApplicationStatusBadge status={preview.status} />
             </div>
 
-            <p className="text-xs text-ink2">
-              提交于 {formatDateTime(preview.createdAt)} · 更新于 {formatDateTime(preview.updatedAt)}
-            </p>
-
-            {preview.resume === null ? (
+            {detail.resume === null ? (
               <p className="rounded-md bg-muted-soft px-4 py-3 text-sm text-muted">
                 该申请已撤回、已失效或招聘已删除，简历文件与补充说明不再展示。
               </p>
             ) : (
               <>
-                <div className="flex items-center gap-3 rounded-md border border-line px-4 py-3">
-                  <FileText className="h-6 w-6 shrink-0 text-primary" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-ink">{preview.resume.fileName}</p>
-                    <p className="text-xs text-ink2">{fileSizeLabel(preview.resume.size)}</p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={download}
-                    disabled={!preview.canDownloadResume}
-                  >
-                    下载
-                  </Button>
-                </div>
+                <ResumePreview
+                  applicationId={detail.id}
+                  file={detail.resume}
+                  canDownload={detail.canDownloadResume}
+                />
 
-                {preview.note ? (
+                {detail.note ? (
                   <div>
                     <p className="mb-1 text-xs font-medium text-ink2">补充说明</p>
                     <p className="whitespace-pre-wrap rounded-md bg-page px-4 py-3 text-sm leading-relaxed text-ink2">
-                      {preview.note}
+                      {detail.note}
                     </p>
                   </div>
                 ) : (
@@ -217,19 +248,18 @@ export function JobApplicationsPage() {
   );
 }
 
-function ApplicationRow({
-  app,
-  full,
-  busy,
-  onMark,
-  onPreview,
-}: {
-  app: Application;
-  full: boolean;
-  busy: boolean;
-  onMark: (a: 'accept' | 'hold' | 'unhold' | 'reject') => void;
-  onPreview: () => void;
-}) {
+/** 处理动作返回的新对象只用于刷新状态字段，简历与说明仍以详情接口为准 */
+function preserveDetail(updated: Application): Partial<Application> {
+  return {
+    status: updated.status,
+    decidedAt: updated.decidedAt,
+    updatedAt: updated.updatedAt,
+    canProcess: updated.canProcess,
+    modified: false,
+  };
+}
+
+function ApplicationRow({ app, onOpen }: { app: Application; onOpen: () => void }) {
   const processing = app.status === 'processing' && app.canProcess;
   const held = app.publisherMark === 'hold';
 
@@ -253,32 +283,14 @@ function ApplicationRow({
         </div>
         <p className="text-xs text-ink2">
           提交于 {formatDateTime(app.createdAt)}（{formatRelative(app.createdAt)}）
+          {app.resume && ` · ${app.resume.fileName}`}
         </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" onClick={onPreview}>
-          查看简历
+        <Button size="sm" variant="secondary" onClick={onOpen}>
+          <FileText size={14} /> 查看简历
         </Button>
-        {processing && (
-          <>
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={full || busy}
-              title={full ? '已满员，无法确认' : '确认该申请'}
-              onClick={() => onMark('accept')}
-            >
-              <Check size={14} /> 确认
-            </Button>
-            <Button size="sm" variant="secondary" disabled={busy} onClick={() => onMark(held ? 'unhold' : 'hold')}>
-              {held ? <RotateCcw size={14} /> : <Minus size={14} />} {held ? '取消暂留' : '暂留'}
-            </Button>
-            <Button size="sm" variant="danger-outline" disabled={busy} onClick={() => onMark('reject')}>
-              <X size={14} /> 拒绝
-            </Button>
-          </>
-        )}
       </div>
     </div>
   );

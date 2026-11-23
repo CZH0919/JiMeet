@@ -66,6 +66,22 @@ body {
   background: rgba(47, 107, 255, 0.16);
 }
 
+/*
+ * 隐藏浏览器自带的密码显示按钮（Edge/IE 的 ::-ms-reveal、Chrome 的密码管理图标），
+ * 否则会和站内 PasswordInput 的「小眼睛」并排出现两个。
+ */
+input[type='password']::-ms-reveal,
+input[type='password']::-ms-clear {
+  display: none;
+}
+
+input[type='password']::-webkit-credentials-auto-fill-button,
+input[type='password']::-webkit-strong-password-auto-fill-button {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -100,3 +116,124 @@ body {
     @apply border-primary/30 shadow-card;
   }
 }
+
+/* ------------------------- DOCX 简历在线预览排版 ------------------------- */
+/* 文件内容在浏览器端解析成 HTML，这里只负责「像一份 A4 简历」的观感 */
+
+.docx-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 40px 44px 48px;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1b2231;
+  box-shadow: 0 10px 30px -20px rgba(31, 64, 124, 0.45);
+  font-size: 14px;
+  line-height: 1.75;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.docx-page .docx-p {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+}
+
+.docx-page .docx-blank {
+  height: 8px;
+  margin: 0;
+}
+
+.docx-page .docx-h2 {
+  margin: 18px 0 8px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.docx-page .docx-h3 {
+  margin: 16px 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.docx-page .docx-h4 {
+  margin: 14px 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.docx-page .docx-center {
+  text-align: center;
+}
+
+.docx-page .docx-right {
+  text-align: right;
+}
+
+.docx-page .docx-justify {
+  text-align: justify;
+}
+
+.docx-page .docx-underline {
+  text-decoration: underline;
+}
+
+.docx-page .docx-strike {
+  text-decoration: line-through;
+}
+
+.docx-page .docx-tab {
+  display: inline-block;
+  width: 2em;
+}
+
+.docx-page .docx-li {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding-left: 2px;
+}
+
+.docx-page .docx-bullet {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-top: 11px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.65;
+}
+
+.docx-page .docx-li-body {
+  flex: 1 1 auto;
+}
+
+.docx-page .docx-img {
+  max-width: 100%;
+  height: auto;
+  margin: 6px 0;
+  border-radius: 4px;
+}
+
+.docx-page .docx-table {
+  width: 100%;
+  margin: 10px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.docx-page .docx-table td {
+  padding: 6px 8px;
+  border: 1px solid #e4e9f2;
+  vertical-align: top;
+}
+
+@media (max-width: 640px) {
+  .docx-page {
+    padding: 24px 18px 28px;
+  }
+}
+
