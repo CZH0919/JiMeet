@@ -42,7 +42,7 @@ def download_resume(user, application_id: int) -> ResumeDownload:
 
     Raises:
         NotFound: 申请不可见，或文件缺失/路径不可用。
-        Forbidden: 申请已撤回、失效或招聘已删除，发布者无下载权限。
+        Forbidden: 发布者对已拒绝、已撤回、已失效申请或已删除招聘下的申请无下载权限。
         RuntimeError: 调用方处于事务中。
         OSError: 其他未转换的文件系统读取错误。
     """

@@ -42,8 +42,8 @@ class AnnouncementTest(TxTestCase):
         a = _create(self.admin, link_url="https://example.com", recruitment=recruitment)
         a.refresh_from_db()
         self.assertEqual(
-            (a.recruitment_id, a.link_url, a.is_pinned),
-            (recruitment.pk, "https://example.com", False),
+            (a.recruitment_id, a.link_url, a.is_pinned, a.submitted_by_id),
+            (recruitment.pk, "https://example.com", False, None),
         )
         self.assertTrue(
             AuditLog.objects.filter(
@@ -78,77 +78,17 @@ class AnnouncementTest(TxTestCase):
         second = _create(self.admin, title="second")
         third = _create(self.admin, title="third")
         self.assertEqual(_ids(), [third.pk, second.pk, first.pk])
-        # HTTP 不按置顶排序：置顶不改变顺序
-        services.update_announcement(first.pk, actor=self.admin, is_pinned=True)
+        # 保留字段 is_pinned 不参与排序
+        Announcement.objects.filter(pk=first.pk).update(is_pinned=True)
         self.assertEqual(_ids(), [third.pk, second.pk, first.pk])
-        services.update_announcement(first.pk, actor=self.admin, is_pinned=False)
+        Announcement.objects.filter(pk=first.pk).update(is_pinned=False)
         self.assertEqual(_ids(), [third.pk, second.pk, first.pk])
-        self.assertEqual(
-            AuditLog.objects.filter(action=actions.ANNOUNCEMENT_UPDATE).count(), 2
-        )
 
-    def test_update_changes_fields(self):
-        a = _create(self.admin)
-        services.update_announcement(a.pk, actor=self.admin, title="新标题", time_kind="event")
-        a.refresh_from_db()
-        self.assertEqual((a.title, a.time_kind), ("新标题", "event"))
-        self.assertFalse(a.is_pinned)
-        self.assertTrue(
-            AuditLog.objects.filter(action=actions.ANNOUNCEMENT_UPDATE, target_id=a.pk).exists()
-        )
-
-    def test_repeated_updates_keep_last_value_and_each_is_audited(self):
-        a = _create(self.admin, title="v0")
-        previous = a.updated_at
-        for i in range(1, 6):
-            services.update_announcement(a.pk, actor=self.admin, title=f"v{i}")
-            a.refresh_from_db()
-            self.assertEqual(a.title, f"v{i}")
-            self.assertGreater(a.updated_at, previous)
-            previous = a.updated_at
-        self.assertEqual(
-            AuditLog.objects.filter(action=actions.ANNOUNCEMENT_UPDATE, target_id=a.pk).count(),
-            5,
-        )
-
-    def test_update_rejects_unknown_fields_and_changes_nothing(self):
-        a = _create(self.admin, title="原标题")
-        other = make_user(is_admin=True)
-        for bad in ({"author": other}, {"deleted_at": now()}, {"id": 999}):
-            with self.assertRaises(ValueError):
-                services.update_announcement(a.pk, actor=self.admin, title="不应保存", **bad)
-        a.refresh_from_db()
-        self.assertEqual((a.title, a.author_id, a.deleted_at), ("原标题", self.admin.pk, None))
-        self.assertFalse(
-            AuditLog.objects.filter(action=actions.ANNOUNCEMENT_UPDATE, target_id=a.pk).exists()
-        )
-
-    def test_update_can_set_and_clear_recruitment_and_link(self):
-        recruitment = make_recruitment(make_user())
-        a = _create(self.admin)
-        services.update_announcement(
-            a.pk, actor=self.admin, recruitment=recruitment, link_url="https://a.example"
-        )
-        a.refresh_from_db()
-        self.assertEqual((a.recruitment_id, a.link_url), (recruitment.pk, "https://a.example"))
-        services.update_announcement(a.pk, actor=self.admin, recruitment=None, link_url=None)
-        a.refresh_from_db()
-        self.assertEqual((a.recruitment_id, a.link_url), (None, None))
-
-    def test_update_requires_author(self):
-        a = _create(self.admin)
-        other_admin = make_user(is_admin=True)
-        with self.assertRaises(Forbidden):
-            services.update_announcement(a.pk, actor=other_admin, title="越权修改")
-        a.refresh_from_db()
-        self.assertEqual(a.title, "公告")
-
-    def test_revoked_admin_cannot_update_or_delete(self):
+    def test_revoked_admin_cannot_delete_or_publish(self):
         revoked = make_user(is_admin=True)
         a = _create(revoked)
         User.objects.filter(pk=revoked.pk).update(is_admin=False)
         for call in (
-            lambda: services.update_announcement(a.pk, actor=revoked, title="x"),
             lambda: services.soft_delete_announcement(a.pk, actor=revoked),
             lambda: services.governance_delete_announcement(a.pk, actor=revoked, reason="r"),
             lambda: services.create_announcement(
@@ -159,7 +99,7 @@ class AnnouncementTest(TxTestCase):
                 call()
         self.assertIsNotNone(selectors.get_announcement(a.pk))
 
-    def test_self_soft_delete_hides_without_reason_or_notification(self):
+    def test_self_soft_delete_notifies_publisher(self):
         a = _create(self.admin)
         services.soft_delete_announcement(a.pk, actor=self.admin)
         self.assertEqual(_ids(), [])
@@ -167,9 +107,30 @@ class AnnouncementTest(TxTestCase):
         self.assertTrue(Announcement.objects.filter(pk=a.pk).exists())
         log = AuditLog.objects.get(action=actions.ANNOUNCEMENT_DELETE)
         self.assertIsNone(log.reason)
-        self.assertEqual(Notification.objects.count(), 0)
+        notice = Notification.objects.get(type=types.ANNOUNCEMENT_REMOVED)
+        self.assertEqual((notice.recipient_id, notice.announcement_id), (self.admin.pk, a.pk))
 
-    def test_governance_delete_with_reason_notifies_author(self):
+    def test_deletion_notifies_publisher_and_submitter_dedup(self):
+        """删除结果通知发布人与投稿人；两者相同只通知一次。"""
+        submitter = make_user()
+        both = make_user(is_admin=True)
+        reviewed = _create(self.admin, submitted_by=submitter)
+        services.governance_delete_announcement(reviewed.pk, actor=make_user(is_admin=True), reason="违规")
+        self.assertEqual(
+            set(Notification.objects.filter(announcement=reviewed).values_list("recipient_id", flat=True)),
+            {self.admin.pk, submitter.pk},
+        )
+        self.assertEqual(Notification.objects.filter(type=types.ANNOUNCEMENT_ADMIN_REMOVED).count(), 2)
+
+        # 发布人即投稿人：只通知一次
+        own = _create(both, submitted_by=both)
+        services.soft_delete_announcement(own.pk, actor=both)
+        self.assertEqual(Notification.objects.filter(announcement=own).count(), 1)
+        self.assertEqual(
+            Notification.objects.get(announcement=own).type, types.ANNOUNCEMENT_REMOVED,
+        )
+
+    def test_governance_delete_with_reason_notifies_with_reason(self):
         other_admin = make_user(is_admin=True)
         a = _create(self.admin)
         services.governance_delete_announcement(a.pk, actor=other_admin, reason="内容过期")
@@ -191,15 +152,7 @@ class AnnouncementTest(TxTestCase):
             with self.subTest(), self.assertRaises(NotFound):
                 call()
         self.assertEqual(AuditLog.objects.filter(action=actions.ANNOUNCEMENT_DELETE).count(), 1)
-        self.assertEqual(Notification.objects.count(), 0)
-
-    def test_update_after_delete_race_rejects(self):
-        a = _create(self.admin)
-        services.governance_delete_announcement(a.pk, actor=self.admin, reason="先行删除")
-        with self.assertRaises(NotFound):
-            services.update_announcement(a.pk, actor=self.admin, title="删除后更新")
-        a.refresh_from_db()
-        self.assertEqual(a.title, "公告")
+        self.assertEqual(Notification.objects.filter(announcement=a).count(), 1)
 
     def test_get_announcement(self):
         a = _create(self.admin)

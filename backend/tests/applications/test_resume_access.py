@@ -45,7 +45,7 @@ class ResumeAccessStage4Test(TxTestCase):
             self.assertTrue(b"".join(response.streaming_content).startswith(b"%PDF-"))
         response.close()
 
-    def test_long_term_records_remain_visible_only_to_participants(self):
+    def test_retention_boundary_applies_to_lists_and_files(self):
         for age in (179, 180, 181, 730):
             with self.subTest(age=age):
                 old = clock.now() - timedelta(days=age)
@@ -53,11 +53,12 @@ class ResumeAccessStage4Test(TxTestCase):
                 app = self._application(r, self.applicant, status="accepted", created_at=old)
                 self.login(self.applicant)
                 result = self.client.get("/api/v1/me/applications", {"recruitment_id": r.pk, "status": "accepted"})
-                self.assertEqual((result.status_code, result.data["data"]["total"]), (200, 1))
-                self._download(self.applicant, app, 200)
-                self._download(self.publisher, app, 200)
+                retained = age < 180
+                self.assertEqual((result.status_code, result.data["data"]["total"]), (200, int(retained)))
+                self._download(self.applicant, app, 200 if retained else 404)
+                self._download(self.publisher, app, 200 if retained else 404)
                 response = self.client.get(f"/api/v1/recruitments/{r.pk}/applications")
-                self.assertEqual((response.status_code, response.data["data"]["total"]), (200, 1))
+                self.assertEqual((response.status_code, response.data["data"]["total"]), (200, int(retained)))
                 self._download(self.admin, app, 404)
 
     def test_withdrawal_retains_own_file_and_reapplication_creates_new_record(self):
@@ -94,6 +95,25 @@ class ResumeAccessStage4Test(TxTestCase):
                 self._download(self.admin, app, 404)
         self.assertEqual(ApplicationStatusHistory.objects.filter(reason="delete_invalid").count(), 2)
         self.assertEqual(self.client.get(f"/api/v1/recruitments/{r.pk}").status_code, 404)
+
+    def test_publisher_resume_access_limited_to_processing_and_accepted(self):
+        """阶段 3：发布者仅可预览/下载处理中、已接受申请的简历，已拒绝一律禁读。"""
+        r = make_recruitment(self.publisher, accepted_count=1)
+        rows = [(make_user(), status) for status in ("processing", "accepted", "rejected", "withdrawn", "invalid")]
+        apps = [(user, self._application(r, user, status=status)) for user, status in rows]
+        for user, app in apps:
+            with self.subTest(status=app.status):
+                self._download(user, app, 200)
+                expected = 200 if app.status in ("processing", "accepted") else 403
+                self._download(self.publisher, app, expected)
+                self._download(self.admin, app, 404)
+                self.login(self.publisher)
+                detail = self.client.get(f"/api/v1/applications/{app.pk}")
+                self.assertEqual(detail.status_code, 200)
+                if expected == 200:
+                    self.assertIn("resume", detail.data["data"])
+                else:
+                    self.assertNotIn("resume", detail.data["data"])
 
     def test_upload_size_and_note_limits_leave_no_partial_application(self):
         r = make_recruitment(self.publisher)

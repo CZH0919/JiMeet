@@ -32,13 +32,15 @@ class ApplicationPoliciesTest(SimpleTestCase):
     def test_access_table(self):
         for status in ("processing", "accepted", "rejected", "withdrawn", "invalid"):
             restricted = status in {"withdrawn", "invalid"}
+            # 发布者仅可下载未删除招聘下处理中、已接受申请的简历（阶段 3 收紧）。
+            publisher_resume = status in {"processing", "accepted"}
             self.app.status = status
             for user, relation, expected in (
                 (self.admin, "none", (False, False, False, False, False)),
                 (self.stranger, "none", (False, False, False, False, False)),
                 (self.anonymous, "none", (False, False, False, False, False)),
                 (self.applicant, "applicant", (True, True, False, True, False)),
-                (self.publisher, "publisher", (True, not restricted, True, not restricted, not restricted)),
+                (self.publisher, "publisher", (True, not restricted, True, publisher_resume, not restricted)),
             ):
                 with self.subTest(status=status, relation=relation):
                     access = resolve_application_access(user, self.app, self.r, self.now)
@@ -49,8 +51,8 @@ class ApplicationPoliciesTest(SimpleTestCase):
         for user, relation in ((self.publisher, "publisher"), (self.applicant, "applicant")):
             access = resolve_application_access(user, self.app, self.r, self.now)
             self.assertEqual(access.relation, relation)
-            self.assertTrue(access.can_view)
-            self.assertEqual(access.can_download_resume, relation == "applicant")
+            self.assertFalse(access.can_view)
+            self.assertFalse(access.can_download_resume)
 
     def test_same_user_falls_back_to_publisher(self):
         self.app.applicant_id = self.publisher.pk

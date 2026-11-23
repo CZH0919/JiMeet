@@ -113,7 +113,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     - `uid` / `real_id`: 对外随机标识（uuid4().hex，32 位）与内部学号/工号，
       均唯一，real_id 不对外公开
     - `nickname` / `name`: 可自定义的昵称与真实姓名
-    - `email`: 同济邮箱，按小写唯一，用于邮箱密码登录；后缀校验不代表邮箱归属已核验
+    - `email`: 同济邮箱，按小写唯一，用于邮箱密码登录；邮箱归属核验时间见 email_verified_at
     - `role`: 用户角色，只能是 student 或 teacher
     - `is_admin` / `is_active`: 业务管理员标记与账号是否启用，业务权限只看 is_admin
     - `password` / `sso_subject`: Django 哈希密码与统一身份认证稳定标识，
@@ -134,6 +134,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     nickname = models.CharField("昵称", max_length=32)
     name = models.CharField("姓名", max_length=32)
     email = models.EmailField("邮箱", max_length=254)
+    cancelled_at = models.DateTimeField("注销时间", null=True, editable=False)
+    email_verified_at = models.DateTimeField("注册邮箱核验时间", null=True, blank=True)
     role = models.CharField("角色", max_length=32, choices=Role.choices)
     is_admin = models.BooleanField("管理员", default=False, db_default=False)
     is_active = models.BooleanField("启用", default=True, db_default=True)
@@ -158,6 +160,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         verbose_name = "用户"
         verbose_name_plural = "用户"
         constraints = [
+            models.CheckConstraint(
+                condition=Q(cancelled_at__isnull=True) | Q(is_active=False, is_admin=False, is_staff=False, is_superuser=False),
+                name="cancelled_user_inactive_chk",
+            ),
             models.UniqueConstraint(Lower("email"), name="user_email_lower_uniq"),
             models.CheckConstraint(condition=Q(role__in=Role.values), name="user_role_chk"),
             models.CheckConstraint(
@@ -166,6 +172,15 @@ class User(AbstractBaseUser, PermissionsMixin):
             ),
         ]
 
+    @property
+    def public_uid(self):
+        """注销后的公开资料不再提供可追踪的用户编号。"""
+        return self.uid if self.cancelled_at is None else None
+
+    @property
+    def public_role(self):
+        return self.role if self.cancelled_at is None else None
+
     def __str__(self) -> str:
         """返回仅含内部主键的对象标识，避免输出身份资料。
 
@@ -173,6 +188,71 @@ class User(AbstractBaseUser, PermissionsMixin):
             str: User(主键)。
         """
         return f"User({self.pk})"
+
+
+class RegistrationMailRequest(models.Model):
+    """注册及登录验证码的共享发送额度，记录 SMTP 是否接受该次投递。"""
+
+    email_key = models.CharField(max_length=64)
+    ip_key = models.CharField(max_length=64)
+    requested_at = models.DateTimeField(db_index=True)
+    delivered = models.BooleanField(null=True)
+
+    class Meta:
+        db_table = "registration_mail_request"
+        indexes = [
+            models.Index(fields=["email_key", "requested_at"], name="reg_mail_email_time_idx"),
+            models.Index(fields=["ip_key", "requested_at"], name="reg_mail_ip_time_idx"),
+        ]
+
+
+class RegistrationVerification(models.Model):
+    """保存同一用途、邮箱与会话的验证码，以及注册核验结果。
+
+    `purpose` 区分注册与登录验证码（registration / login），两种验证码分别绑定
+    用途、邮箱和会话，共享同邮箱的重发间隔与发送额度。新邮箱的建号资格与已有账号提示互斥。
+    """
+
+    PURPOSE_REGISTRATION = "registration"
+    PURPOSE_LOGIN = "login"
+
+    purpose = models.CharField("用途", max_length=16, default=PURPOSE_REGISTRATION)
+    email_key = models.CharField(max_length=64)
+    session_key_hash = models.CharField(max_length=64)
+    latest_request = models.ForeignKey(
+        RegistrationMailRequest, on_delete=models.PROTECT, related_name="verification_states",
+    )
+    code_digest = models.CharField(max_length=64, blank=True, default="")
+    code_expires_at = models.DateTimeField(null=True)
+    failures = models.PositiveSmallIntegerField(default=0)
+    verified_at = models.DateTimeField(null=True)
+    duplicate_verified_at = models.DateTimeField("已有账号核验时间", null=True)
+
+    class Meta:
+        db_table = "registration_verification"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["purpose", "email_key", "session_key_hash"],
+                name="reg_verify_purpose_email_session_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(purpose__in=["registration", "login"]),
+                name="reg_verify_purpose_chk",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(code_digest="", code_expires_at__isnull=True)
+                    | (~Q(code_digest="") & Q(code_expires_at__isnull=False, verified_at__isnull=True))
+                ),
+                name="reg_verify_code_state_chk",
+            ),
+            models.CheckConstraint(
+                condition=Q(duplicate_verified_at__isnull=True) | Q(
+                    purpose="registration", verified_at__isnull=True, code_digest="", code_expires_at__isnull=True,
+                ),
+                name="reg_duplicate_receipt_chk",
+            ),
+        ]
 
 
 class AuthFailure(models.Model):

@@ -82,7 +82,7 @@ def can_view_applications(user, r) -> bool:
         r: 招募对象。
 
     Returns:
-        bool: 仅已认证发布者为 True，不因固定留存期限隐藏历史申请。
+        bool: 仅已认证发布者为 True。列表另按留存期限过滤，清理后只提供匿名计数。
     """
     return _is_publisher(user, r)
 

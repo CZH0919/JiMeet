@@ -1,0 +1,17 @@
+*
+!manage.py
+!requirements/
+requirements/*
+!requirements/base.txt
+!requirements/production.txt
+!config/
+!config/**
+!apps/
+!apps/**
+!deploy/
+deploy/*
+!deploy/gunicorn.conf.py
+!deploy/healthcheck.py
+**/__pycache__/
+**/*.pyc
+**/.env*

@@ -89,7 +89,7 @@ export interface AdminRepository {
   governRemoveJob(jobId: string, reason: string): Promise<void>;
 }
 
-/** 聊天（后端暂未提供，保留本地 mock） */
+/** 聊天页面读取会话和收发消息的仓储接口。 */
 export interface MessageRepository {
   listConversations(q: { page: number; pageSize: number }): Promise<Page<Conversation>>;
   listMessages(

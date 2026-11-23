@@ -6,6 +6,7 @@ from typing import Callable, TypeVar
 
 from django.db import transaction
 
+from apps.accounts.locking import lock_active_user
 from apps.applications.history import record_status_changes
 from apps.applications.models import Application, ApplicationHistoryReason
 from apps.core import clock, tx
@@ -142,7 +143,7 @@ def mark_full(r: Recruitment, now: datetime, *, extra_update_fields: Iterable[st
     reject_processing_applications(r, r.full_at, "full")
 
 
-def run_in_recruitment_tx(recruitment_id: int, fn: Callable[[Recruitment, datetime], T]) -> T:
+def run_in_recruitment_tx(recruitment_id: int, fn: Callable[[Recruitment, datetime], T], *, actor=None) -> T:
     """先提交状态补执行，再在独立事务中执行业务回调。
 
     回调异常原样传播并回滚业务事务，不撤销已提交的到期补执行；回调中的申请锁必须在招募锁之后取得。
@@ -162,6 +163,8 @@ def run_in_recruitment_tx(recruitment_id: int, fn: Callable[[Recruitment, dateti
     while True:
         sync_recruitment(recruitment_id)
         with tx.recruitment_lock_scope(), transaction.atomic():
+            if actor is not None:
+                lock_active_user(actor)
             r = tx.lock_recruitment(recruitment_id)
             now = clock.now()
             end = rules.seven_day_deadline(r)

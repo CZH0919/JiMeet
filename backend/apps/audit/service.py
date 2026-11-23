@@ -1,6 +1,15 @@
 """审计追加入口，业务审计应与业务操作在同一事务内调用。"""
+from django.db.models import Func, UUIDField
+
 from apps.audit import actions
 from apps.audit.models import AuditLog
+
+
+def detach_actors(logs):
+    """解除所选审计的身份外键，保留操作时角色、对象、动作、原因和时间。"""
+    logs.filter(actor__isnull=False).update(
+        actor=None, actor_ref=Func(function="gen_random_uuid", output_field=UUIDField()),
+    )
 
 
 def record(*, actor, action: str, target_type: str, target_id: int | None, reason: str | None = None) -> AuditLog:
