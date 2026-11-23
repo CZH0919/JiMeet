@@ -3,6 +3,7 @@ from apps.notifications import types
 
 _ALLOWED_CONTEXT = {"recruitment_title", "announcement_title", "status_label", "link", "auto", "reason_label"}
 _TEMPLATES = {
+    types.ANONYMOUS_WITHDRAWAL: ("申请已撤回", "您的招聘《{recruitment_title}》有一份申请因账号注销已撤回。"),
     types.APPLICATION_SUBMITTED: ("收到新申请", "您的招聘《{recruitment_title}》收到一份新申请。"),
     types.APPLICATION_ACCEPTED: ("申请已接受", "您对《{recruitment_title}》的申请已被接受。"),
     types.APPLICATION_REJECTED: ("申请已拒绝", "您对《{recruitment_title}》的申请已被拒绝。"),

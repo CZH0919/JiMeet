@@ -14,7 +14,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts import ratelimit, verification
+from apps.accounts.cancellation import cancel_account
 from apps.accounts.serializers import (
+    CancelAccountSerializer,
     DevLoginSerializer,
     LoginSerializer,
     ProfileUpdateSerializer,
@@ -325,6 +327,24 @@ class MeView(PrivateAPIView):
         serializer.is_valid(raise_exception=True)
         user = update_profile(request.user, **serializer.validated_data)
         return ok(profile_data(user))
+
+    def delete(self, request):
+        """注销登录者本人账号，并终止当前会话。
+
+        Args:
+            request: 须通过会话及 CSRF 校验，JSON 中 confirm 必须为布尔值 true。
+
+        Returns:
+            Response: 200，data 为 null。其他设备随后访问时须重新认证。
+
+        Raises:
+            ValidationError: 确认字段缺失、值无效或传入了额外字段。
+        """
+        serializer = CancelAccountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cancel_account(request.user)
+        logout(request._request)
+        return ok()
 
 
 class PrivacyConsentView(APIView):

@@ -45,7 +45,7 @@ class ResumeAccessStage4Test(TxTestCase):
             self.assertTrue(b"".join(response.streaming_content).startswith(b"%PDF-"))
         response.close()
 
-    def test_long_term_records_remain_visible_only_to_participants(self):
+    def test_retention_boundary_applies_to_lists_and_files(self):
         for age in (179, 180, 181, 730):
             with self.subTest(age=age):
                 old = clock.now() - timedelta(days=age)
@@ -53,11 +53,12 @@ class ResumeAccessStage4Test(TxTestCase):
                 app = self._application(r, self.applicant, status="accepted", created_at=old)
                 self.login(self.applicant)
                 result = self.client.get("/api/v1/me/applications", {"recruitment_id": r.pk, "status": "accepted"})
-                self.assertEqual((result.status_code, result.data["data"]["total"]), (200, 1))
-                self._download(self.applicant, app, 200)
-                self._download(self.publisher, app, 200)
+                retained = age < 180
+                self.assertEqual((result.status_code, result.data["data"]["total"]), (200, int(retained)))
+                self._download(self.applicant, app, 200 if retained else 404)
+                self._download(self.publisher, app, 200 if retained else 404)
                 response = self.client.get(f"/api/v1/recruitments/{r.pk}/applications")
-                self.assertEqual((response.status_code, response.data["data"]["total"]), (200, 1))
+                self.assertEqual((response.status_code, response.data["data"]["total"]), (200, int(retained)))
                 self._download(self.admin, app, 404)
 
     def test_withdrawal_retains_own_file_and_reapplication_creates_new_record(self):

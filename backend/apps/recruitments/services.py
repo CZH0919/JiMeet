@@ -7,6 +7,7 @@ from apps.applications.history import record_status_changes
 from apps.applications.models import Application, ApplicationHistoryReason
 from apps.audit import actions
 from apps.audit.service import record
+from apps.accounts.locking import lock_active_user
 from apps.core import clock, tx
 from apps.core.choices import ApplicationStatus, CloseReason, PublisherMark, RecruitmentStatus
 from apps.core.errors import Conflict, ErrorCode, Forbidden, NotAuthenticated, NotFound, ValidationFailed
@@ -164,6 +165,7 @@ def create_recruitment(user, *, data: dict):
     _require_user(user)
     tx.assert_not_in_atomic()
     with transaction.atomic():
+        lock_active_user(user)
         now = clock.now()
         rules.validate_type(data["type"])
         rules.validate_deadline(data["deadline"], now)
@@ -230,7 +232,7 @@ def update_recruitment(user, recruitment_id: int, *, data: dict):
             locked.save(update_fields=[*changed, "updated_at"])
         return locked
 
-    return state.run_in_recruitment_tx(recruitment_id, update)
+    return state.run_in_recruitment_tx(recruitment_id, update, actor=user)
 
 
 def close_recruitment(user, recruitment_id: int):
@@ -263,7 +265,7 @@ def close_recruitment(user, recruitment_id: int):
         )
         return locked
 
-    return state.run_in_recruitment_tx(recruitment_id, close)
+    return state.run_in_recruitment_tx(recruitment_id, close, actor=user)
 
 
 def _delete_recruitment(user, recruitment_id: int, *, reason: str | None, governance: bool):
@@ -286,7 +288,11 @@ def _delete_recruitment(user, recruitment_id: int, *, reason: str | None, govern
         )
         locked.deleted_at = now
         locked.accepted_count = 0
-        locked.save(update_fields=["deleted_at", "accepted_count", "updated_at"])
+        if locked.anonymous_counts.get("accepted"):
+            counts = locked.anonymous_counts.copy()
+            counts["invalid"] = counts.get("invalid", 0) + counts.pop("accepted")
+            locked.anonymous_counts = counts
+        locked.save(update_fields=["deleted_at", "accepted_count", "anonymous_counts", "updated_at"])
         Application.objects.filter(
             pk__in=[app.pk for app in applications if app.status == ApplicationStatus.PROCESSING],
         ).update(
@@ -300,7 +306,7 @@ def _delete_recruitment(user, recruitment_id: int, *, reason: str | None, govern
             publisher_mark=PublisherMark.NONE, has_unseen_update=False, updated_at=now,
         )
         _notify_applicants(locked, applications, types.RECRUITMENT_DELETED)
-        if governance:
+        if governance and locked.publisher.cancelled_at is None:
             notify(
                 recipient=locked.publisher, type=types.ADMIN_REMOVED, recruitment=locked,
                 context={"reason_label": reason},
@@ -310,7 +316,7 @@ def _delete_recruitment(user, recruitment_id: int, *, reason: str | None, govern
             target_type="recruitment", target_id=locked.pk, reason=reason,
         )
 
-    state.run_in_recruitment_tx(recruitment_id, delete)
+    state.run_in_recruitment_tx(recruitment_id, delete, actor=user)
 
 
 def delete_recruitment(user, recruitment_id: int, *, reason: str | None = None):

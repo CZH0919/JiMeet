@@ -79,6 +79,17 @@ class DevLoginSerializer(StrictSerializer):
     email = serializers.EmailField(max_length=254, required=False)
 
 
+class CancelAccountSerializer(StrictSerializer):
+    """注销仅接受本人明确提交的 JSON 布尔值 true。"""
+
+    confirm = StrictBooleanField(required=True)
+
+    def validate_confirm(self, value):
+        if not value:
+            raise serializers.ValidationError("须明确确认注销账号")
+        return value
+
+
 class ProfileUpdateSerializer(StrictSerializer):
     """允许修改的个人资料字段。"""
 

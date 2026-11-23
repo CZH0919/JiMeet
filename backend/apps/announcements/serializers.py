@@ -133,9 +133,9 @@ class AnnouncementSerializer(serializers.ModelSerializer):
             dict: uid、nickname、role。
         """
         return {
-            "uid": announcement.author.uid,
+            "uid": announcement.author.public_uid,
             "nickname": announcement.author.nickname,
-            "role": announcement.author.role,
+            "role": announcement.author.public_role,
         }
 
     def get_recruitment_available(self, announcement) -> bool:

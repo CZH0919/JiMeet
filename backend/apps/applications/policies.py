@@ -7,6 +7,7 @@ from apps.core import clock
 from apps.core.choices import ApplicationStatus
 from apps.core.errors import Conflict, ErrorCode, Forbidden, NotAuthenticated
 from apps.recruitments import rules
+from apps.recruitments.lifecycle import details_expired
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def resolve_application_access(user, app, recruitment, now) -> ApplicationAccess
     if publisher and applicant:
         logger.error("申请人与发布者相同", extra={"application_id": app.pk})
     relation = "publisher" if publisher else "applicant" if applicant else "none"
-    if relation == "none":
+    if relation == "none" or details_expired(recruitment, now):
         return ApplicationAccess(relation, False, False, False, False, False)
     restricted = recruitment.deleted_at is not None or app.status in {ApplicationStatus.WITHDRAWN, ApplicationStatus.INVALID}
     publisher_resume_open = (

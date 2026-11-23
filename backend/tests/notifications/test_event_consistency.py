@@ -171,9 +171,9 @@ class EventConsistencyTest(TxTestCase):
             (types.APPLICATION_REJECTED, self.applicant.pk, app.pk),
         ])
         self.client.force_authenticate(self.applicant)
-        row = self.client.get("/api/v1/me/applications?status=rejected").data["data"]["items"][0]
-        self.assertEqual(row["id"], app.pk)
-        self.assertFalse(row["permissions"]["can_modify"])
+        rows = self.client.get("/api/v1/me/applications?status=rejected").data["data"]["items"]
+        self.assertEqual(rows, [])
+        self.assertEqual(self.client.get(f"/api/v1/applications/{app.pk}").status_code, 404)
         self.assert_no_email()
 
     def test_late_full_and_concurrent_sync_generate_one_result(self):

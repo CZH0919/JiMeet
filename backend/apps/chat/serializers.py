@@ -64,11 +64,11 @@ class MessageSerializer(serializers.ModelSerializer):
 
     def get_sender_uid(self, message):
         conversation = self.context["conversation"]
-        return (conversation.user_low if message.sender_id == conversation.user_low_id else conversation.user_high).uid
+        return (conversation.user_low if message.sender_id == conversation.user_low_id else conversation.user_high).public_uid
 
     def get_recipient_uid(self, message):
         conversation = self.context["conversation"]
-        return (conversation.user_high if message.sender_id == conversation.user_low_id else conversation.user_low).uid
+        return (conversation.user_high if message.sender_id == conversation.user_low_id else conversation.user_low).public_uid
 
 
 class ConversationSerializer(serializers.Serializer):

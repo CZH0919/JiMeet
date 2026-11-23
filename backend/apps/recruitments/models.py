@@ -50,6 +50,7 @@ class Recruitment(models.Model):
         "关闭原因", max_length=16, choices=CloseReason.choices, null=True, blank=True,
     )
     deleted_at = models.DateTimeField("软删除时间", null=True, blank=True)
+    anonymous_counts = models.JSONField("注销申请的匿名计数", default=dict, blank=True)
     application_status_counts = models.JSONField("申请状态统计", null=True, blank=True)
     applications_anonymized_at = models.DateTimeField("申请清理完成时间", null=True, blank=True)
     created_at = models.DateTimeField("发布时间", db_default=Now())

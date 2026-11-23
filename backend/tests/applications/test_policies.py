@@ -51,8 +51,8 @@ class ApplicationPoliciesTest(SimpleTestCase):
         for user, relation in ((self.publisher, "publisher"), (self.applicant, "applicant")):
             access = resolve_application_access(user, self.app, self.r, self.now)
             self.assertEqual(access.relation, relation)
-            self.assertTrue(access.can_view)
-            self.assertEqual(access.can_download_resume, relation == "applicant")
+            self.assertFalse(access.can_view)
+            self.assertFalse(access.can_download_resume)
 
     def test_same_user_falls_back_to_publisher(self):
         self.app.applicant_id = self.publisher.pk

@@ -55,13 +55,13 @@ def _lock_and_check(announcement_id: int, *, actor, require_author: bool):
         NotFound: 公告不存在或已删除。
         Forbidden: 操作者当前无管理员权限，或要求作者身份时不匹配。
     """
+    _require_current_admin(actor)
     try:
         locked = Announcement.objects.select_for_update().get(pk=announcement_id)
     except Announcement.DoesNotExist:
         raise NotFound("公告不存在") from None
     if locked.deleted_at is not None:
         raise NotFound("公告不存在")
-    _require_current_admin(actor)
     if require_author and locked.author_id != actor.pk:
         raise Forbidden("仅公告作者可执行该操作")
     return locked
@@ -77,6 +77,8 @@ def _notify_deletion(announcement: Announcement, *, by_admin: bool, reason: str 
     if announcement.submitted_by_id and announcement.submitted_by_id != announcement.author_id:
         recipients.append(announcement.submitted_by)
     for recipient in recipients:
+        if recipient.cancelled_at is not None:
+            continue
         notify(
             recipient=recipient, type=notice_type, announcement=announcement, context=context,
         )
@@ -242,11 +244,11 @@ def create_submission(
 
 def _lock_submission(submission_id: int, *, actor):
     """锁定投稿行并复核管理员权限与待审状态。"""
+    _require_current_admin(actor)
     try:
         locked = AnnouncementSubmission.objects.select_for_update().get(pk=submission_id)
     except AnnouncementSubmission.DoesNotExist:
         raise NotFound("投稿不存在") from None
-    _require_current_admin(actor)
     if locked.status != AnnouncementSubmission.STATUS_PENDING:
         raise Conflict(ErrorCode.SUBMISSION_ALREADY_PROCESSED, "投稿已被处理")
     return locked

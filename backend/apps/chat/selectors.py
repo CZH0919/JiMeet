@@ -5,6 +5,8 @@ from django.db.models import Count, F, OuterRef, Q, Subquery
 from apps.accounts.models import User
 from apps.applications.models import Application
 from apps.chat.models import ChatConversation, ChatMessage
+from apps.core import clock
+from apps.recruitments.lifecycle import expired_recruitments
 from apps.core.errors import NotFound, ValidationFailed
 from apps.recruitments.models import Recruitment
 
@@ -15,8 +17,8 @@ def conversations_for(user):
         ChatConversation.objects.filter(Q(user_low=user) | Q(user_high=user))
         .select_related("user_low", "user_high")
         .only("created_at", "last_message_at",
-              "user_low__uid", "user_low__nickname", "user_low__role", "user_low__is_active",
-              "user_high__uid", "user_high__nickname", "user_high__role", "user_high__is_active")
+              "user_low__uid", "user_low__nickname", "user_low__role", "user_low__is_active", "user_low__cancelled_at",
+              "user_high__uid", "user_high__nickname", "user_high__role", "user_high__is_active", "user_high__cancelled_at")
     )
 
 
@@ -57,7 +59,7 @@ def contact_from_source(user, uid, *, recruitment_id=None, application_id=None, 
         raise ValidationFailed(details={"source": "只可提供一种联系来源"})
     if uid == user.uid:
         raise ValidationFailed(details={"peer_uid": "不能与自己发起会话"})
-    peer = User.objects.filter(uid=uid, is_active=True).only("uid", "nickname", "role").first()
+    peer = User.objects.filter(uid=uid, is_active=True).only("uid", "nickname", "role", "cancelled_at").first()
     if peer is None:
         raise NotFound("联系入口不可用")
     low, high = sorted((user.pk, peer.pk))
@@ -67,7 +69,9 @@ def contact_from_source(user, uid, *, recruitment_id=None, application_id=None, 
     if recruitment_id is not None:
         source = Recruitment.objects.filter(pk=recruitment_id, publisher=peer, deleted_at__isnull=True)
     elif application_id is not None:
-        source = Application.objects.filter(pk=application_id, applicant=peer, recruitment__publisher=user)
+        source = Application.objects.filter(pk=application_id, applicant=peer, recruitment__publisher=user).exclude(
+            expired_recruitments(clock.now(), "recruitment__"),
+        )
     else:
         raise NotFound("联系入口不可用")
     if lock_source:

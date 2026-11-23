@@ -8,7 +8,7 @@
 | 功能域 | 数据来源 | 说明 |
 | --- | --- | --- |
 | 注册 / 登录 / 会话 | 后端 `/auth/register/send-code`、`/auth/register/verify-code`、`/auth/register` 及登录、会话接口 | 同济邮箱验证码注册，已有账号凭密码登录，使用 CSRF 和 Session Cookie |
-| 个人资料 | 后端 `GET/PATCH /me`、`POST /me/privacy-consent` | 可改昵称；首次投递前单独确认个人信息处理告知 |
+| 个人资料 | 后端 `GET/PATCH/DELETE /me`、`POST /me/privacy-consent` | 支持昵称修改、隐私确认与本人注销。注销确认页面待前端接入 |
 | 通知公告（首页） | 后端 `/announcements` | 首页即公告页，按发布时间倒序分页；管理员可发布/编辑/删除/治理下架 |
 | 招聘 | 后端 `/recruitments`、`/me/recruitments`、`/tags` | 类型/标签/状态/关键词筛选，分页 |
 | 申请与简历 | 后端 `/me/applications`、`/recruitments/{id}/applications`、`/applications/{id}` 等 | 上传 PDF/DOC/DOCX（≤10 MiB）、修改、撤回、确认/暂留/拒绝、下载 |

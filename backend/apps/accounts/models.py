@@ -134,6 +134,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     nickname = models.CharField("昵称", max_length=32)
     name = models.CharField("姓名", max_length=32)
     email = models.EmailField("邮箱", max_length=254)
+    cancelled_at = models.DateTimeField("注销时间", null=True, editable=False)
     email_verified_at = models.DateTimeField("注册邮箱核验时间", null=True, blank=True)
     role = models.CharField("角色", max_length=32, choices=Role.choices)
     is_admin = models.BooleanField("管理员", default=False, db_default=False)
@@ -159,6 +160,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         verbose_name = "用户"
         verbose_name_plural = "用户"
         constraints = [
+            models.CheckConstraint(
+                condition=Q(cancelled_at__isnull=True) | Q(is_active=False, is_admin=False, is_staff=False, is_superuser=False),
+                name="cancelled_user_inactive_chk",
+            ),
             models.UniqueConstraint(Lower("email"), name="user_email_lower_uniq"),
             models.CheckConstraint(condition=Q(role__in=Role.values), name="user_role_chk"),
             models.CheckConstraint(
@@ -166,6 +171,15 @@ class User(AbstractBaseUser, PermissionsMixin):
                 name="user_login_method_chk",
             ),
         ]
+
+    @property
+    def public_uid(self):
+        """注销后的公开资料不再提供可追踪的用户编号。"""
+        return self.uid if self.cancelled_at is None else None
+
+    @property
+    def public_role(self):
+        return self.role if self.cancelled_at is None else None
 
     def __str__(self) -> str:
         """返回仅含内部主键的对象标识，避免输出身份资料。

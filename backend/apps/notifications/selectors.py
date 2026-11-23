@@ -1,6 +1,8 @@
-"""通知的接收人及目标关联权限过滤，不按固定期限隐藏历史。"""
+"""通知的接收人、目标关联及申请留存期限过滤。"""
 
 from django.db.models import F, Q
+from apps.core import clock
+from apps.recruitments.lifecycle import expired_recruitments
 from apps.notifications import types
 from apps.notifications.models import Notification
 
@@ -37,6 +39,10 @@ def visible_notifications(user):
 
     return (
         Notification.objects.filter(recipient=user)
+        .exclude(
+            (Q(application__isnull=False) | Q(type__in=types.APPLICATION_RETENTION_EVENTS, recruitment__isnull=False))
+            & expired_recruitments(clock.now(), "recruitment__")
+        )
         .filter(related_application | related_recruitment | related_announcement | unassociated)
         .select_related("recruitment", "application", "announcement")
         .order_by("-created_at", "-pk")

@@ -44,15 +44,14 @@ class NotificationVisibilityTest(TxTestCase):
             notices.append(notice)
         self.client.force_authenticate(self.applicant)
         listing = self.client.get("/api/v1/notifications").data["data"]
-        self.assertEqual(listing["total"], 4)
-        self.assertEqual([item["id"] for item in listing["items"]], [n.pk for n in notices])
-        self.assertEqual(self.client.get("/api/v1/notifications/unread-count").data["data"]["unread_count"], 4)
-        for _ in range(2):
-            response = self.client.post(f"/api/v1/notifications/{notices[-1].pk}/read", {}, format="json")
-            self.assertEqual(response.status_code, 200)
-            self.assertTrue(response.data["data"]["is_read"])
+        self.assertEqual(listing["total"], 1)
+        self.assertEqual([item["id"] for item in listing["items"]], [notices[0].pk])
+        self.assertEqual(self.client.get("/api/v1/notifications/unread-count").data["data"]["unread_count"], 1)
+        for expired in notices[1:]:
+            response = self.client.post(f"/api/v1/notifications/{expired.pk}/read", {}, format="json")
+            self.assertEqual(response.status_code, 404)
         response = self.client.post("/api/v1/notifications/read-all", {}, format="json")
-        self.assertEqual(response.data["data"]["updated_count"], 3)
+        self.assertEqual(response.data["data"]["updated_count"], 1)
         self.assertEqual(self.client.get("/api/v1/notifications?is_read=false").data["data"]["total"], 0)
         self.assertEqual(self.client.post("/api/v1/notifications/read-all", {}, format="json").data["data"]["updated_count"], 0)
 

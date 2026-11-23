@@ -9,7 +9,8 @@ from apps.audit.service import record
 from apps.core import clock, tx
 from apps.core.choices import ApplicationStatus, PublisherMark, RecruitmentStatus
 from apps.core.errors import Conflict, ErrorCode, Forbidden, NotFound
-from apps.files.storage import discard_resume, staged_resume
+from apps.files.storage import staged_resume
+from apps.recruitments.retention import queue_file_removal
 from apps.notifications import types
 from apps.notifications.service import notify
 from apps.recruitments.models import Recruitment
@@ -74,7 +75,7 @@ def submit_application(user, recruitment_id: int, *, resume, note: str | None = 
             )
             return application
 
-        return run_in_recruitment_tx(recruitment_id, create)
+        return run_in_recruitment_tx(recruitment_id, create, actor=user)
 
 
 def _update_locked_application(user, application_id: int, update):
@@ -101,13 +102,13 @@ def _update_locked_application(user, application_id: int, update):
         require_application_access(user, application, now)
         return update(locked_recruitment, application, now)
 
-    return run_in_recruitment_tx(recruitment_id, apply)
+    return run_in_recruitment_tx(recruitment_id, apply, actor=user)
 
 
 def modify_application(user, application_id: int, *, note=None, resume=None, update_note=False):
     """修改本人的处理中申请，并标记发布者尚未读取更新。
 
-    替换成功提交后尝试清理旧文件，清理失败仅记日志；业务失败清理新文件。更新通知与审计随业务事务提交。
+    替换成功提交后尝试清理旧文件，清理失败保留待重试任务；业务失败清理新文件。更新通知与审计随业务事务提交。
     说明未变化且未上传新文件时保留版本和已阅标记，不产生更新事件。
 
     Args:
@@ -133,11 +134,9 @@ def modify_application(user, application_id: int, *, note=None, resume=None, upd
         return get_application(user, application_id, clock.now())
 
     with staged_resume(resume) as stored:
-        application, old_resume_path = _save_application_update(
+        _save_application_update(
             user, application_id, note=note, update_note=update_note, stored_resume=stored,
         )
-    if old_resume_path and old_resume_path != stored.path:
-        discard_resume(old_resume_path)
     return get_application(user, application_id, clock.now())
 
 
@@ -154,7 +153,7 @@ def _save_application_update(
         stored_resume: 可选的 StoredResume；文件已由调用方暂存。
 
     Returns:
-        tuple: (已保存的申请, 被替换的旧文件相对路径或 None)。
+        Application: 已保存的申请。文件删除任务随业务事务提交。
 
     Raises:
         BizError: 对象不可见、非申请人或申请不可修改。
@@ -170,7 +169,7 @@ def _save_application_update(
             raise Conflict(ErrorCode.PROCESSING_WINDOW_CLOSED, "申请修改窗口已关闭")
 
         if stored_resume is None and (not update_note or application.note == note):
-            return application, None
+            return application
 
         update_fields = ["has_unseen_update", "updated_at"]
         application.has_unseen_update = True
@@ -186,12 +185,14 @@ def _save_application_update(
             application.resume_type = stored_resume.type
             update_fields.extend(["resume_file", "resume_name", "resume_size", "resume_type"])
         application.save(update_fields=update_fields)
+        if old_resume_path and old_resume_path != stored_resume.path:
+            queue_file_removal([old_resume_path])
         notify(
             recipient=recruitment.publisher, type=types.APPLICATION_UPDATED,
             recruitment=recruitment, application=application,
         )
         _record_application_update(user, application)
-        return application, old_resume_path
+        return application
 
     return _update_locked_application(user, application_id, update)
 

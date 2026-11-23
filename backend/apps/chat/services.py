@@ -6,7 +6,7 @@ import re
 from unicodedata import category
 
 from django.db import DatabaseError, transaction
-from django.db.models import OuterRef, Subquery
+from django.db.models import OuterRef, Q, Subquery
 
 from apps.accounts.models import User
 from apps.chat import selectors
@@ -40,6 +40,11 @@ def open_conversation(user, *, peer_uid, recruitment_id=None, application_id=Non
         ValidationFailed: 目标为本人或同时指定两种来源。
     """
     with transaction.atomic():
+        participants = User.objects.select_for_update(no_key=True).filter(
+            Q(pk=user.pk) | Q(uid=peer_uid), is_active=True,
+        ).order_by("pk")
+        if user.pk not in list(participants.values_list("pk", flat=True)):
+            raise NotFound("联系入口不可用")
         peer, existing = selectors.contact_from_source(
             user, peer_uid, recruitment_id=recruitment_id, application_id=application_id, lock_source=True,
         )
@@ -90,13 +95,12 @@ def send_message(user, conversation_id, *, content):
         BizError: 发送超限返回 429 和剩余暂停秒数，数据库写入失败返回 500。
     """
     with transaction.atomic():
-        conversation = selectors.get_conversation(user, conversation_id, lock=True)
-        _validate_content(content)
-        if not selectors.peer_of(conversation, user).is_active:
-            raise NotFound("联系入口不可用")
-        # 先锁会话，再锁发送者；不同会话的并发发送共用同一额度。
         active = User.objects.select_for_update(no_key=True).filter(pk=user.pk, is_active=True)
         if active.values_list("pk", flat=True).first() is None:
+            raise NotFound("联系入口不可用")
+        conversation = selectors.get_conversation(user, conversation_id, lock=True)
+        _validate_content(content)
+        if not User.objects.filter(pk=selectors.peer_of(conversation, user).pk, is_active=True).exists():
             raise NotFound("联系入口不可用")
         moment = clock.now()
         remaining = _pause_remaining(user, moment)

@@ -7,6 +7,7 @@ from django.db import IntegrityError, transaction
 
 from apps.accounts import ratelimit, verification
 from apps.accounts.identity import is_tongji_email, resolve_role
+from apps.accounts.locking import lock_active_user
 from apps.accounts.models import User
 from apps.accounts.passwords import validate_new_password
 from apps.accounts.sso import SSOIdentity
@@ -177,11 +178,10 @@ def login_with_code(*, email: str, code: str, session_key: str | None, ip: str =
     normalized = (email or "").strip().lower()
     ratelimit.check_auth_limits(email=normalized, ip=ip, kind=ratelimit.KIND_LOGIN)
     try:
-        verification.consume_login_code(email=normalized, code=code, session_key=session_key)
+        user = verification.consume_login_code(email=normalized, code=code, session_key=session_key)
     except ValidationFailed:
         ratelimit.record_auth_failure(email=normalized, ip=ip, kind=ratelimit.KIND_LOGIN)
         raise
-    user = User.objects.filter(email__iexact=normalized).first()
     if user is None:
         ratelimit.record_auth_failure(email=normalized, ip=ip, kind=ratelimit.KIND_LOGIN)
         raise BizError("该邮箱尚未注册或账号不可用", code=ErrorCode.AUTH_FAILED, http_status=401)
@@ -245,6 +245,7 @@ def login_with_sso(identity: SSOIdentity) -> User:
         raise _auth_failed() from None
 
 
+@transaction.atomic
 def update_profile(user: User, nickname=None, email_notify_enabled=None) -> User:
     """更新本人昵称及保留的邮件偏好兼容字段；不触发邮件发送。
 
@@ -259,6 +260,7 @@ def update_profile(user: User, nickname=None, email_notify_enabled=None) -> User
     Raises:
         ValidationFailed: 昵称或通知开关类型、取值不合法。
     """
+    user = lock_active_user(user)
     fields = []
     if nickname is not None:
         if not isinstance(nickname, str) or not 1 <= len(nickname.strip()) <= 32:
@@ -288,7 +290,7 @@ def give_privacy_consent(user: User) -> User:
         User: 已从数据库刷新确认状态的原用户对象。
     """
     now = clock.now()
-    User.objects.filter(pk=user.pk, privacy_consented_at__isnull=True).update(
+    User.objects.filter(pk=user.pk, is_active=True, privacy_consented_at__isnull=True).update(
         privacy_consented_at=now, updated_at=now,
     )
     user.refresh_from_db()

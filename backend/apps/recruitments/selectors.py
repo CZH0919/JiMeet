@@ -9,6 +9,7 @@ from apps.applications.policies import can_submit_application
 from apps.core.choices import ApplicationStatus, CloseReason, RecruitmentStatus, RecruitmentType
 from apps.core.errors import BizError, NotFound
 from apps.recruitments import policies, rules
+from apps.recruitments.lifecycle import details_expired
 from apps.recruitments.models import Recruitment, Tag
 
 
@@ -111,27 +112,6 @@ def project_recruitment(recruitment, now):
     return projected
 
 
-def _effective_application_status(status, recruitment, now):
-    """计算满员或关闭后七天边界上的申请展示状态。
-
-    Args:
-        status: 已保存的申请状态。
-        recruitment: 已完成时间投影的招募对象。
-        now: 判断状态的带时区时间。
-
-    Returns:
-        str: 未删除招聘已满员或到达七天边界时 processing 显示为 rejected，其余保留原值。
-    """
-    if recruitment.deleted_at is not None:
-        return status
-    if status == ApplicationStatus.PROCESSING and recruitment.status == RecruitmentStatus.FULL:
-        return ApplicationStatus.REJECTED
-    end = rules.seven_day_deadline(recruitment)
-    if status == ApplicationStatus.PROCESSING and end is not None and now >= end:
-        return ApplicationStatus.REJECTED
-    return status
-
-
 def count_applications(recruitment, now) -> dict:
     """统计有效展示状态下的申请数量。
 
@@ -142,12 +122,12 @@ def count_applications(recruitment, now) -> dict:
     Returns:
         dict: 五种申请状态对应的数量；如已有留存清理聚合值则优先使用。
     """
-    counts = dict.fromkeys(ApplicationStatus.values, 0)
+    counts = {status: recruitment.anonymous_counts.get(status, 0) for status in ApplicationStatus.values}
     if recruitment.applications_anonymized_at is not None:
         stored = recruitment.application_status_counts or {}
         return {status: stored.get(status, 0) for status in counts}
     for group in Application.objects.filter(recruitment=recruitment).values("status").annotate(total=Count("pk")):
-        status = _effective_application_status(group["status"], recruitment, now)
+        status = rules.effective_application_status(group["status"], recruitment, now)
         counts[status] += group["total"]
     return counts
 
@@ -166,10 +146,12 @@ def detail_context(recruitment, user, now) -> dict:
         dict: my_application、permissions；仅发布者另含 application_counts。
     """
     mine = Application.objects.filter(recruitment=recruitment, applicant=user)
+    if details_expired(recruitment, now):
+        mine = mine.none()
     latest = mine.order_by("-created_at", "-pk").values("id", "status").first()
     has_active = mine.exclude(status=ApplicationStatus.WITHDRAWN).exists()
     if latest is not None:
-        latest["status"] = _effective_application_status(latest["status"], recruitment, now)
+        latest["status"] = rules.effective_application_status(latest["status"], recruitment, now)
     try:
         can_submit_application(user, recruitment, now, has_active_application=has_active)
     except BizError as error:

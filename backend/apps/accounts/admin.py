@@ -30,6 +30,9 @@ class UserAdmin(DjangoUserAdmin):
     访问权限，业务权限仍只依据 is_admin。
     """
 
+    def has_change_permission(self, request, obj=None):
+        return (obj is None or obj.cancelled_at is None) and super().has_change_permission(request, obj)
+
     form = AccountChangeForm
     add_form = AccountCreationForm
     list_display = ("id", "real_id", "name", "nickname", "role", "is_admin", "is_active")

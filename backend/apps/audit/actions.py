@@ -9,6 +9,7 @@ ANNOUNCEMENT_UPDATE = "announcement_update"
 ANNOUNCEMENT_DELETE = "announcement_delete"
 ANNOUNCEMENT_SUBMISSION_APPROVE = "announcement_submission_approve"
 ANNOUNCEMENT_SUBMISSION_REJECT = "announcement_submission_reject"
+ACCOUNT_CANCEL = "account_cancel"
 ADMIN_GRANT = "admin_grant"
 ADMIN_REVOKE = "admin_revoke"
 PASSWORD_INIT = "password_init"
@@ -25,6 +26,7 @@ ALL = frozenset(
         ANNOUNCEMENT_DELETE,
         ANNOUNCEMENT_SUBMISSION_APPROVE,
         ANNOUNCEMENT_SUBMISSION_REJECT,
+        ACCOUNT_CANCEL,
         ADMIN_GRANT,
         ADMIN_REVOKE,
         PASSWORD_INIT,

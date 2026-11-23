@@ -46,6 +46,18 @@ def _digest(purpose: str, value: str) -> str:
     return salted_hmac(f"jimeet.registration.{purpose}", value, secret=key, algorithm="sha256").hexdigest()
 
 
+def revoke_email_proofs(email):
+    """在注销事务中撤销此邮箱所有会话的两类验证码和建号资格。"""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(%s, %s)", [0x4A694D74, 1])
+    if not RegistrationVerification.objects.exists() and not RegistrationMailRequest.objects.exists():
+        return
+    key = _digest("email", email.strip().lower())
+    RegistrationVerification.objects.filter(email_key=key).delete()
+    # 保留全局及 IP 额度流水，解除与原邮箱的关联。
+    RegistrationMailRequest.objects.filter(email_key=key).update(email_key=secrets.token_hex(32))
+
+
 def registration_session_key(session: SessionBase) -> str | None:
     """返回已开始邮箱验证且仍有效的 Django 会话键。"""
     return session.session_key if session.get(SESSION_MARKER) else None
@@ -199,10 +211,11 @@ def verify_registration_code(*, email: str, code: str, session_key: str | None) 
     raise ValidationFailed(details={"code": "验证码错误或已失效"})
 
 
-def consume_login_code(*, email: str, code: str, session_key: str | None) -> None:
+def consume_login_code(*, email: str, code: str, session_key: str | None) -> User | None:
     """在登录事务中核对并一次性消费登录验证码。
 
-    成功即删除该用途下会话-邮箱的验证码记录；失败累计错误次数并返回 400。
+    成功即删除该用途下会话与邮箱的验证码记录，并返回核验时匹配的用户或 None。
+    失败累计错误次数并返回 400。
 
     Raises:
         ValidationFailed: 验证码错误、过期、已消费或会话不匹配。
@@ -211,8 +224,9 @@ def consume_login_code(*, email: str, code: str, session_key: str | None) -> Non
         challenge = _locked_challenge(PURPOSE_LOGIN, email, session_key)
         now = clock.now()
         if _check_code(challenge, code, now):
+            user = User.objects.filter(email__iexact=email).first()
             challenge.delete()
-            return
+            return user
     raise ValidationFailed(details={"code": "验证码错误或已失效"})
 
 

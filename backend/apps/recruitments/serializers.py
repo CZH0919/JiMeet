@@ -94,9 +94,9 @@ class RecruitmentQuerySerializer(StrictQuerySerializer):
 class PublicUserSerializer(serializers.Serializer):
     """招募中只嵌入公开身份，不暴露姓名、邮箱或数据库用户主键。"""
 
-    uid = serializers.CharField(read_only=True)
+    uid = serializers.CharField(source="public_uid", read_only=True, allow_null=True)
     nickname = serializers.CharField(read_only=True)
-    role = serializers.ChoiceField(choices=Role.choices, read_only=True)
+    role = serializers.ChoiceField(source="public_role", choices=Role.choices, read_only=True, allow_null=True)
 
 
 class TagSerializer(serializers.Serializer):

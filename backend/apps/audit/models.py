@@ -10,7 +10,7 @@ class AuditLog(models.Model):
 
     ### Attributes
     - `actor` / `actor_role` / `actor_is_admin`: 操作者和操作时的身份快照，
-      三者同时为空或同时非空，未登录请求使用全空
+      未登录请求使用全空。去标识后以 actor_ref 代替账号外键，保留操作时身份
     - `action`: 操作名称，由应用层常量约束，有意不加数据库 CHECK
     - `target_type` / `target_id`: 历史对象类型和主键，目标不存在时主键可空，
       target_id 不使用外键，以便申请清理后保留审计记录
@@ -18,7 +18,7 @@ class AuditLog(models.Model):
     - `created_at`: 日志创建时间，至少留存一年
 
     模型实例只允许创建，禁止修改和删除；不得通过 QuerySet.update/delete
-    绕过实例保护。当前留存清理命令仍为预留入口。
+    修改业务事实。留存服务仅可解除操作者的身份关联。
     """
 
     actor = models.ForeignKey(
@@ -29,6 +29,7 @@ class AuditLog(models.Model):
         null=True,
         blank=True,
     )
+    actor_ref = models.UUIDField("去标识审计编号", null=True, editable=False)
     actor_role = models.CharField("操作时身份", max_length=32, null=True, blank=True)
     actor_is_admin = models.BooleanField("操作时管理员权限", null=True, blank=True)
     action = models.CharField("动作", max_length=32)
@@ -41,14 +42,10 @@ class AuditLog(models.Model):
         db_table = "audit_log"
         constraints = [
             models.CheckConstraint(
-                condition=Q(
-                    actor__isnull=True,
-                    actor_role__isnull=True,
-                    actor_is_admin__isnull=True,
-                ) | Q(
-                    actor__isnull=False,
-                    actor_role__isnull=False,
-                    actor_is_admin__isnull=False,
+                condition=(
+                    Q(actor__isnull=True, actor_ref__isnull=True, actor_role__isnull=True, actor_is_admin__isnull=True)
+                    | Q(actor__isnull=False, actor_ref__isnull=True, actor_role__isnull=False, actor_is_admin__isnull=False)
+                    | Q(actor__isnull=True, actor_ref__isnull=False, actor_role__isnull=False, actor_is_admin__isnull=False)
                 ),
                 name="audit_actor_triple_chk",
             ),
