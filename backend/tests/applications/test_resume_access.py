@@ -95,6 +95,25 @@ class ResumeAccessStage4Test(TxTestCase):
         self.assertEqual(ApplicationStatusHistory.objects.filter(reason="delete_invalid").count(), 2)
         self.assertEqual(self.client.get(f"/api/v1/recruitments/{r.pk}").status_code, 404)
 
+    def test_publisher_resume_access_limited_to_processing_and_accepted(self):
+        """阶段 3：发布者仅可预览/下载处理中、已接受申请的简历，已拒绝一律禁读。"""
+        r = make_recruitment(self.publisher, accepted_count=1)
+        rows = [(make_user(), status) for status in ("processing", "accepted", "rejected", "withdrawn", "invalid")]
+        apps = [(user, self._application(r, user, status=status)) for user, status in rows]
+        for user, app in apps:
+            with self.subTest(status=app.status):
+                self._download(user, app, 200)
+                expected = 200 if app.status in ("processing", "accepted") else 403
+                self._download(self.publisher, app, expected)
+                self._download(self.admin, app, 404)
+                self.login(self.publisher)
+                detail = self.client.get(f"/api/v1/applications/{app.pk}")
+                self.assertEqual(detail.status_code, 200)
+                if expected == 200:
+                    self.assertIn("resume", detail.data["data"])
+                else:
+                    self.assertNotIn("resume", detail.data["data"])
+
     def test_upload_size_and_note_limits_leave_no_partial_application(self):
         r = make_recruitment(self.publisher)
         self.login(self.applicant)

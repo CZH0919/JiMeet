@@ -50,7 +50,10 @@ def _is_user(user, user_id) -> bool:
 def resolve_application_access(user, app, recruitment, now) -> ApplicationAccess:
     """按业务关系、申请状态及招聘删除标记计算字段读取权限。
 
-    本人可下载保留的简历；撤回、失效或招聘删除后发布者禁读，并隐藏说明与私有标记。管理员无额外权限。
+    本人可下载自己仍保留的简历；发布者仅可预览或下载未删除招聘下处理中、
+    已接受申请的简历，已拒绝、已撤回、已失效一律禁读（文件权限与申请记录、
+    补充说明的可见性分别判断）。撤回、失效或招聘删除后发布者隐藏说明与私有
+    标记。管理员无额外权限。
 
     Args:
         user: 当前操作者。
@@ -69,12 +72,16 @@ def resolve_application_access(user, app, recruitment, now) -> ApplicationAccess
     if relation == "none":
         return ApplicationAccess(relation, False, False, False, False, False)
     restricted = recruitment.deleted_at is not None or app.status in {ApplicationStatus.WITHDRAWN, ApplicationStatus.INVALID}
+    publisher_resume_open = (
+        recruitment.deleted_at is None
+        and app.status in {ApplicationStatus.PROCESSING, ApplicationStatus.ACCEPTED}
+    )
     return ApplicationAccess(
         relation=relation,
         can_view=True,
         can_see_note=not publisher or not restricted,
         can_see_applicant_name=publisher,
-        can_download_resume=applicant or (publisher and not restricted),
+        can_download_resume=applicant or (publisher and publisher_resume_open),
         can_see_publisher_mark=publisher and not restricted,
     )
 
