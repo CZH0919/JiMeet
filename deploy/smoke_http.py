@@ -1,6 +1,7 @@
 """Exercise only the staging site using synthetic records and real HTTP cookies/CSRF.
 
-Usage: python deploy/smoke_http.py /path/to/access.json http://121.36.228.209
+Usage: python deploy/smoke_http.py - http://121.36.228.209 /path/to/accounts.json
+Use '-' for the current public entry, or a gateway JSON for a legacy gated site.
 The credential file is never printed. Leave one marked smoke-test record for review.
 """
 import json
@@ -9,7 +10,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 import requests
 
-credentials=json.loads(Path(sys.argv[1]).read_text())
+credentials=json.loads(Path(sys.argv[1]).read_text()) if sys.argv[1] != '-' else None
 base=sys.argv[2].rstrip('/')
 accounts = ({a['account']: a for a in json.loads(Path(sys.argv[3]).read_text())['accounts']}
             if len(sys.argv) > 3 else {})
@@ -18,7 +19,8 @@ checks=[]
 def session():
     s=requests.Session()
     s.trust_env=False
-    s.auth=(credentials['username'],credentials['password'])
+    if credentials:
+        s.auth=(credentials['username'],credentials['password'])
     return s
 
 def call(s, method, path, expected=200, **kwargs):
@@ -42,8 +44,11 @@ def login(real_id):
     return s
 
 anonymous=requests.Session(); anonymous.trust_env=False
-assert anonymous.get(base+'/',timeout=20).status_code==401
-checks.append('Unauthenticated website blocked: 401')
+entry=anonymous.get(base+'/',timeout=20)
+assert entry.status_code==(401 if credentials else 200)
+if not credentials:
+    assert 'WWW-Authenticate' not in entry.headers
+checks.append('Gateway enabled: 401' if credentials else 'Public website entry: 200, no Basic challenge')
 s=session()
 html=call(s,'GET','/').text
 assert 'id="root"' in html
