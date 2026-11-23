@@ -7,6 +7,8 @@ PERMISSION_DENIED = "permission_denied"
 ANNOUNCEMENT_PUBLISH = "announcement_publish"
 ANNOUNCEMENT_UPDATE = "announcement_update"
 ANNOUNCEMENT_DELETE = "announcement_delete"
+ANNOUNCEMENT_SUBMISSION_APPROVE = "announcement_submission_approve"
+ANNOUNCEMENT_SUBMISSION_REJECT = "announcement_submission_reject"
 ADMIN_GRANT = "admin_grant"
 ADMIN_REVOKE = "admin_revoke"
 PASSWORD_INIT = "password_init"
@@ -21,6 +23,8 @@ ALL = frozenset(
         ANNOUNCEMENT_PUBLISH,
         ANNOUNCEMENT_UPDATE,
         ANNOUNCEMENT_DELETE,
+        ANNOUNCEMENT_SUBMISSION_APPROVE,
+        ANNOUNCEMENT_SUBMISSION_REJECT,
         ADMIN_GRANT,
         ADMIN_REVOKE,
         PASSWORD_INIT,

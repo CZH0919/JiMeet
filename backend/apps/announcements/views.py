@@ -6,11 +6,14 @@
 from apps.announcements import selectors, services
 from apps.announcements.models import Announcement
 from apps.announcements.serializers import (
+    AdminSubmissionSerializer,
     AnnouncementCreateSerializer,
     AnnouncementQuerySerializer,
     AnnouncementSerializer,
-    AnnouncementUpdateSerializer,
     GovernanceDeleteSerializer,
+    SubmissionCreateSerializer,
+    SubmissionRejectSerializer,
+    SubmissionSerializer,
 )
 from apps.core.errors import Forbidden, NotFound, ValidationFailed
 from apps.core.pagination import paginate
@@ -41,7 +44,7 @@ def _load_or_404(announcement_id: int) -> Announcement:
 
 
 def _require_author_admin(request, announcement) -> None:
-    """编辑与本人删除的入口校验：当前管理员且为作者。
+    """本人删除的入口校验：当前管理员且为作者。
 
     Args:
         request: 当前请求。
@@ -133,7 +136,7 @@ class AnnouncementListView(PrivateAPIView):
 
 
 class AnnouncementDetailView(PrivateAPIView):
-    """公告详情、编辑与本人删除。"""
+    """公告详情与本人删除；公告自 Sprint3 起不可编辑（PATCH 关闭）。"""
 
     def get(self, request, announcement_id):
         """GET /api/v1/announcements/{id}：公告详情。
@@ -148,36 +151,11 @@ class AnnouncementDetailView(PrivateAPIView):
         announcement = _load_or_404(announcement_id)
         return ok(AnnouncementSerializer(announcement, context={"request": request}).data)
 
-    def patch(self, request, announcement_id):
-        """PATCH /api/v1/announcements/{id}：作者（管理员）部分更新。
-
-        Args:
-            request: JSON 含至少一个可写字段；不接受 is_pinned。
-            announcement_id: 公告主键。
-
-        Returns:
-            Response: HTTP 200，data 为更新后的公告对象。
-
-        Raises:
-            NotFound: 公告不存在或已删除（含更新/删除竞争），返回 404。
-            Forbidden: 非管理员或非作者，返回 403。
-            ValidationError: 字段不合法，返回 400。
-        """
-        announcement = _load_or_404(announcement_id)
-        _require_author_admin(request, announcement)
-        serializer = AnnouncementUpdateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        fields = dict(serializer.validated_data)
-        if "recruitment_id" in fields:
-            fields["recruitment"] = _resolve_recruitment(fields.pop("recruitment_id"))
-        services.update_announcement(announcement_id, actor=request.user, **fields)
-        announcement = _load_or_404(announcement_id)
-        return ok(AnnouncementSerializer(announcement, context={"request": request}).data)
-
     def delete(self, request, announcement_id):
         """DELETE /api/v1/announcements/{id}：作者（管理员）本人删除。
 
-        软删除，不需要原因，不产生通知；重复删除 404 且不重复副作用。
+        软删除，不需要原因；删除结果通知发布人与投稿人（相同只通知一次）；
+        重复删除 404 且不重复副作用。
 
         Args:
             request: 请求体为空或 JSON 空对象。
@@ -199,7 +177,7 @@ class AnnouncementDetailView(PrivateAPIView):
 
 
 class AnnouncementGovernanceView(PrivateAPIView):
-    """管理员治理删除公告：原因必填，同事务通知作者。"""
+    """管理员治理删除公告：原因必填，同事务通知发布人与投稿人。"""
 
     def delete(self, request, announcement_id):
         """DELETE /api/v1/admin/announcements/{id}：治理删除。
@@ -209,7 +187,7 @@ class AnnouncementGovernanceView(PrivateAPIView):
             announcement_id: 公告主键。
 
         Returns:
-            Response: HTTP 200、data=None；软删除、审计与作者通知同事务提交。
+            Response: HTTP 200、data=None；软删除、审计与删除结果通知同事务提交。
 
         Raises:
             Forbidden: 非管理员，返回 403。
@@ -225,3 +203,95 @@ class AnnouncementGovernanceView(PrivateAPIView):
             reason=serializer.validated_data["reason"],
         )
         return ok()
+
+
+class SubmissionCreateView(PrivateAPIView):
+    """普通用户投稿入口；提交后不能改稿、撤回。"""
+
+    def post(self, request):
+        """POST /api/v1/announcement-submissions：提交公告投稿。
+
+        Args:
+            request: JSON 必填 title、content、time_kind、event_at，可选 link_url。
+
+        Returns:
+            Response: HTTP 201，data 为投稿对象（status=pending）。
+
+        Raises:
+            ValidationError: 字段不合法，返回 400。
+            Conflict: 当日投稿数或待审数已达上限，返回 409 SUBMISSION_LIMIT_EXCEEDED。
+        """
+        serializer = SubmissionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        submission = services.create_submission(submitter=request.user, **serializer.validated_data)
+        return created(SubmissionSerializer(submission).data)
+
+
+class MySubmissionListView(PrivateAPIView):
+    """本人投稿状态查询（含驳回理由与生成公告引用）。"""
+
+    query_serializer_class = AnnouncementQuerySerializer
+
+    def get(self, request):
+        """GET /api/v1/me/announcement-submissions：按提交时间倒序分页。"""
+        items, number, size, total = paginate(selectors.list_my_submissions(request.user), request)
+        return page(SubmissionSerializer(items, many=True).data, number, size, total)
+
+
+class AdminSubmissionListView(PrivateAPIView):
+    """管理员共享待审池：仅待审投稿，逾期优先并带逾期标记。"""
+
+    query_serializer_class = AnnouncementQuerySerializer
+
+    def get(self, request):
+        """GET /api/v1/admin/announcement-submissions：待审列表及待审总数。
+
+        Returns:
+            Response: HTTP 200，data.total 为待审总数；
+                排序为逾期优先，组内按提交时间、编号升序。
+
+        Raises:
+            Forbidden: 非管理员，返回 403。
+        """
+        IsAdminFlag().has_permission(request, None)
+        items, number, size, total = paginate(selectors.list_pending_submissions(), request)
+        return page(AdminSubmissionSerializer(items, many=True).data, number, size, total)
+
+
+class AdminSubmissionActionView(PrivateAPIView):
+    """投稿审核动作：领取、交回、通过、驳回；处理结果同事务写审计与通知。"""
+
+    def post(self, request, submission_id, action):
+        """POST /api/v1/admin/announcement-submissions/{id}/{action}。
+
+        action 取 claim / release / approve / reject；reject 必填 reason（1～500 字），
+        其余动作请求体为空或 JSON 空对象。通过时按投稿原文生成公告（发布人记
+        审核管理员、投稿人另记）；驳回必填理由。审核结果、审计与投稿人站内
+        通知同事务提交。
+
+        Raises:
+            Forbidden: 非管理员，返回 403。
+            NotFound: 投稿不存在，返回 404。
+            Conflict: 投稿已被处理（SUBMISSION_ALREADY_PROCESSED），或领取
+                缺失/过期/他人有效领取（SUBMISSION_LOCKED），返回 409。
+            ValidationError: reject 缺少理由或请求体不合法，返回 400。
+        """
+        IsAdminFlag().has_permission(request, None)
+        if action == "reject":
+            serializer = SubmissionRejectSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            services.reject_submission(
+                submission_id, actor=request.user,
+                reason=serializer.validated_data["reason"],
+            )
+            return ok()
+        validate_data(EmptyBodySerializer, request.data)
+        dispatch = {
+            "claim": services.claim_submission,
+            "release": services.release_submission,
+            "approve": services.approve_submission,
+        }
+        if action not in dispatch:
+            raise NotFound("动作不存在")
+        submission = dispatch[action](submission_id, actor=request.user)
+        return ok(SubmissionSerializer(submission).data)
