@@ -274,7 +274,7 @@ CREATE INDEX application_applicant_idx ON application (applicant_id, created_at 
 
 ### 1.7 ChatConversation 会话 与 ChatMessage 消息
 
-聊天表结构独立于招聘与申请，仅定义两个参与者之间的纯文本消息；当前未提供聊天 HTTP 接口。
+招聘或申请仅用于首次联系的来源校验。双人会话独立保存，来源后续变化不影响已有会话。接口字段与权限见[对方主页与站内聊天](../api.md#10-对方主页与站内聊天)。
 
 ChatConversation：
 
@@ -283,7 +283,7 @@ ChatConversation：
 | id | BIGINT | PRIMARY KEY 自增 | |
 | user_low_id | BIGINT | NOT NULL，FK → app_user.id | 两个参与者中 id 较小者 |
 | user_high_id | BIGINT | NOT NULL，FK → app_user.id | 两个参与者中 id 较大者 |
-| last_message_at | TIMESTAMPTZ | 可空 | 最近一条消息时间，用于会话列表排序 |
+| last_message_at | TIMESTAMPTZ | 可空 | 最近消息时间缓存，清理到期消息后重算。对外摘要与排序按仍可见的消息计算 |
 | created_at | TIMESTAMPTZ | NOT NULL | |
 
 表级约束：`CHECK (user_low_id < user_high_id)`，`UNIQUE (user_low_id, user_high_id)`，保证任意两人只有一个会话。
@@ -295,16 +295,18 @@ ChatMessage：
 | id | BIGINT | PRIMARY KEY 自增 | |
 | conversation_id | BIGINT | NOT NULL，FK → chat_conversation.id | |
 | sender_id | BIGINT | NOT NULL，FK → app_user.id | 必须是会话参与者（应用层校验） |
-| content | TEXT | NOT NULL，长度 1~2000（应用层校验） | 纯文本 |
+| content | TEXT | NOT NULL，发送接口限制 1～500 个 Unicode 码点 | 非空纯文本及 Emoji |
 | created_at | TIMESTAMPTZ | NOT NULL | |
-| read_at | TIMESTAMPTZ | 可空 | 对方已读时间 |
+| read_at | TIMESTAMPTZ | 可空 | 接收者首次确认该消息已读的时间 |
+| expires_at | TIMESTAMPTZ | 非空，数据库生成并存储 | 上海本地发送时刻加六个自然月，目标日不存在时取月末同一时刻 |
 
-索引：`(conversation_id, created_at)`。
+历史分页使用 `(conversation_id, created_at)` 索引，发送额度查询使用 `(sender_id, created_at)` 索引，到期扫描使用 `expires_at` 索引。
 
 #### 设计细节
 
 1. 管理员不可查看聊天记录，接口层不提供任何管理员读取聊天内容的入口。
-2. 消息读取、发送与推送通道尚未对外提供，模型存在不代表聊天功能可用。
+2. 已读按接收方明确提交的可见消息编号更新，仅修改未读行。历史、摘要、未读统计均要求 `expires_at` 晚于查询时刻。分批清理时先按编号锁定受影响会话，删除到期行并校正最近消息时间。
+3. `chat_send_pause` 以 `user_id` 为主键并引用 `app_user`，`blocked_until` 保存发送暂停截止时间。发送事务先锁会话，再锁发送者账号，按现存消息计数最近 60 秒的成功发送。第 51 次尝试只提交一分钟的暂停，重试不延长；其他用户、读取及回执不受影响。
 
 ### 1.8 AuditLog 审计日志
 

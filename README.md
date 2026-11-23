@@ -14,7 +14,7 @@
 | 申请与简历 | 后端 `/me/applications`、`/recruitments/{id}/applications`、`/applications/{id}` 等 | 上传 PDF/DOC/DOCX（≤10 MiB）、修改、撤回、确认/暂留/拒绝、下载 |
 | 站内通知 | 后端 `/notifications` | 页头小喇叭 + 右侧通知面板（已移除通知分页页） |
 | 管理员治理 | 后端 `DELETE /admin/recruitments/{id}`、`DELETE /admin/announcements/{id}` | 独立入口、原因必填、通知发布者并写审计 |
-| 站内聊天 | **本地演示数据**（`src/data/mock/chatRepository.ts`） | 后端 Sprint2 未交付聊天接口，仅用于界面走查 |
+| 站内聊天 | **本地演示数据**（`src/data/mock/chatRepository.ts`） | 当前页面使用演示数据，后端[对方主页与聊天接口](backend/design_file/api.md#10-对方主页与站内聊天)已可对接 |
 
 接口契约以 [`backend/design_file/api.md`](backend/design_file/api.md)为唯一正文。
 
@@ -157,7 +157,7 @@ src/
 | 项 | 说明 |
 | --- | --- |
 | 首页/注册提示「接口不存在（HTTP 404）」 | 确认前端代理指向已提供对应接口的后端实例，并核对注册三步接口路径 |
-| 站内聊天 | 后端未提供接口，当前为本地演示数据，消息不会入库 |
+| 站内聊天 | 当前页面仍使用本地演示数据。接入第 10 章的聊天接口后，消息将写入后端数据库 |
 | 招聘列表的「已申请」标记 | 后端列表接口（RecruitmentSummary）不返回 `my_application`，列表卡片无法标注申请状态；详情页会显示 |
 | 邮件通知 | 业务通知使用站内渠道。`email_notify_enabled` 为兼容字段，不控制注册验证码 |
 | 学校 SSO / 邮箱归属验证 | 后端接口返回 501 占位；当前以邮箱域名准入 |

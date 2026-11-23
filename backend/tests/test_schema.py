@@ -20,6 +20,7 @@ BUSINESS_MODELS = [
     ("audit", "AuditLog"),
     ("chat", "ChatConversation"),
     ("chat", "ChatMessage"),
+    ("chat", "ChatSendPause"),
 ]
 
 
