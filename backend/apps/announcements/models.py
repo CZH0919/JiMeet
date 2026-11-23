@@ -17,11 +17,10 @@ class Announcement(models.Model):
     - `time_kind` / `event_at`: 时间类型（报名截止或活动时间）及对应时间，均必填
     - `link_url`: 可空的相关网站，格式由应用层校验
     - `recruitment`: 可空的关联招募，作为招募链接，PROTECT
-    - `is_pinned`: 保留字段，本轮 HTTP 不提供置顶能力
+    - `is_pinned`: 兼容字段，公告接口不接受置顶或按置顶排序
     - `created_at` / `updated_at` / `deleted_at`: 发布、最近编辑与软删除时间
 
-    权限（发布、删除）由应用层校验，数据库只保证时间类型取值；
-    Sprint3 起公告不可编辑（编辑入口已收回）。
+    公告发布后不可编辑。应用层校验发布和删除权限，数据库约束时间类型。
     """
 
     author = models.ForeignKey(

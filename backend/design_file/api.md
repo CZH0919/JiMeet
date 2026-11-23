@@ -74,9 +74,7 @@
 
 ### 1.1 运行约定
 
-依赖见 `backend/requirements/base.txt`：Python 3.12+、PostgreSQL 15+，Django 6.1.2、DRF 3.18.3、psycopg 3.3.6。配置从进程环境变量读取，不自动加载 `.env`；变量清单见 `backend/.env.example`。
-
-`seed_tags` 初始化标签；`run_sync_recruitments` 补执行到期关闭、七天到期及满员后的剩余申请拒绝，需要独立调用或调度。`run_purge_chat_messages` 分批删除已到期聊天消息，可用 `--batch-size` 指定每批 1～5000 条，默认 500。`run_purge_applications` 汇总已到期的申请，删除关联明细并重试私有文件删除。文件重试仍失败时命令以非零状态退出，可在存储恢复后重跑。业务通知邮件派发和审计清理命令仍为预留。
+部署使用同源 HTTPS，生产环境关闭开发登录，会话和 CSRF Cookie 均设置 `Secure`。容器启动、迁移、健康检查、定时任务、备份恢复及验证码投递监控见[后端运行手册](../deploy/README.md)。
 
 受控账号管理：`grant_admin` / `revoke_admin` 按邮箱授予或撤销业务管理员，锁定目标账号并与审计同事务提交，重复操作不重复记录状态变化。`init_password` 仅初始化无可用密码的账号，拒绝覆盖已有密码，复用注册的 8～128 字符及相似度策略；支持终端无回显输入或标准输入管道，不接收密码参数。三类命令失败均回滚账号变更。不提供在线授予或仅凭邮箱重设密码的入口。
 
@@ -281,7 +279,7 @@ async function confirmPrivacyConsent() {
 
 请求为 `{"email":"student@tongji.edu.cn"}`。首次受理建立匿名会话。成功返回 HTTP 200，`data={"expires_in":300,"resend_after":60}`。两项单位均为秒，分别表示验证码有效期（5 分钟）与重发间隔。该响应表示请求已受理。已注册邮箱得到相同受理响应并照常投递验证码，不变更账号；此时不提示是否已注册，重复注册提示在验码成功后给出。
 
-同一邮箱 60 秒内只受理一次。默认滚动限额为单邮箱 10 次/24 小时、单来源 IP 20 次/小时、全局 100 次/24 小时。来源取服务端连接的 `REMOTE_ADDR`。预占额度后才尝试投递，投递失败也计入本次额度。超限返回 429 `RATE_LIMITED`，邮件服务不可用返回 503 `EMAIL_DELIVERY_UNAVAILABLE`。同一会话对同一邮箱成功重发后仅最新验证码可用，旧注册资格也随之失效。
+同一邮箱 60 秒内只受理一次。默认滚动限额为单邮箱 10 次/24 小时、单来源 IP 20 次/小时、全局 100 次/24 小时。直连时按连接来源地址计数；生产代理通过专用 Unix 套接字连接，并覆盖 `X-Real-IP` 为实际客户端地址。预占额度后才尝试投递，投递失败也计入本次额度。超限返回 429 `RATE_LIMITED`，邮件服务不可用返回 503 `EMAIL_DELIVERY_UNAVAILABLE`。同一会话对同一邮箱成功重发后仅最新验证码可用，旧注册资格也随之失效。
 
 #### 4.3.2 POST /auth/register/verify-code
 
@@ -352,7 +350,7 @@ async function confirmPrivacyConsent() {
 | name | 否 | 非空字符串，最多 32 字；省略时取编号 |
 | email | 否 | 合法邮箱，最多 254 字符；省略时生成 `<real_id>@tongji.edu.cn`，域名须在配置白名单内 |
 
-未知字段、空值或格式错误返回 400；邮箱域名或身份冲突返回 401 `AUTH_FAILED`；停用账号返回 403。以 `t`/`T` 开头的编号临时映射为教师，其余为学生；新账号不会自动获得管理员权限。默认昵称为 `同学_` 加随机字符，不使用真实姓名。
+未知字段、空值或格式错误返回 400；邮箱域名或身份冲突返回 401 `AUTH_FAILED`；停用账号返回 403。开发身份中以 `t`/`T` 开头的编号映射为教师，其余为学生；新账号不会自动获得管理员权限。默认昵称为 `同学_` 加随机字符，不使用真实姓名。
 
 200 返回本人资料，与 `GET /me` 相同；已有账号再次登录不借请求字段修改资料。管理员测试身份由受控后台配置，不接受前端提交 `is_admin`。
 
@@ -369,7 +367,7 @@ async function confirmPrivacyConsent() {
   "name": "陈同学",
   "role": "student",
   "is_admin": false,
-  "email": "sprint1_sample@tongji.edu.cn",
+  "email": "student@tongji.edu.cn",
   "email_notify_enabled": true,
   "privacy_consented": false
 }
@@ -446,7 +444,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 | 数据结构 | 字段 |
 | --- | --- |
-| PublicUser | `uid`、`nickname`、`role`；不含用户数据库主键、姓名、邮箱 |
+| PublicUser | `uid`、`nickname`、`role`；已注销的发布者以匿名资料展示，`uid`、`role` 为 null。不含用户数据库主键、姓名或邮箱 |
 | Tag | `id`、`name` |
 | RecruitmentSummary | `id`、`title`、`type`、`tags: Tag[]`、`min_headcount`（可空）、`max_headcount`、`accepted_count`、`status`、`is_deleted`、`deadline`、`publisher: PublicUser`、`created_at`、`updated_at` |
 | RecruitmentDetail | Summary 全部字段，加 `description`、`note`（可空）、`closed_at` / `full_at` / `close_reason`（可空）、`my_application`（可空）、`permissions`；仅发布者另有 `application_counts` |
@@ -544,7 +542,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 申请列表、详情、简历和相应联系入口共用第 9.1 节的留存边界。到期后列表移除该项，详情及下载返回 404。留存期内仍按上表裁剪字段和下载权限。
 
-申请人读取本人姓名使用 `/me`，不额外放宽申请对象的姓名字段策略。管理员本人恰为发布者或申请人时按该业务关系处理。撤回、失效或招聘删除后撤销发布者访问，本人仍可下载保留简历；发布者对已拒绝申请同样禁读简历（Sprint3 阶段 3 收紧），已关闭招募本身不触发禁读。
+申请人从 `/me` 读取自己的姓名。管理员参与招聘时适用其申请人或发布者身份对应的权限。发布者只可下载未删除招聘下处理中或已接受申请的简历；仅关闭招聘不改变此权限。
 
 详情 `data` 示例：发布者查看仍在处理窗口内的申请；`has_unseen_update=true` 表示已有修改标记，新提交的该标记默认为 false。
 
@@ -593,7 +591,7 @@ PATCH 时用“已有值 + 提交值”一起验证人数范围；`min_headcount
 
 同一用户对同一招募最多存在一条未撤回申请，已接受或已拒绝后不能重投；撤回后可重新 POST，生成新 ID。本人投递、隐私未确认、窗口关闭、重复投递分别使用第 2.3 节错误码。已删除招募按 404 处理。
 
-下载成功使用 `Content-Disposition: attachment` 和清洗后的文件名；Content-Type 分别为 `application/pdf`、`application/msword`、`application/vnd.openxmlformats-officedocument.wordprocessingml.document`。对象不可见返回 404；发布者对已撤回、失效或招聘已删除的申请下载返回 403；申请人本人可下载保留文件；文件实际缺失返回 404，不暴露物理路径。发布者读取他人简历写审计，文件流仍携带请求 ID；敏感详情和下载响应须使用 `Cache-Control: private, no-store`。
+下载成功使用 `Content-Disposition: attachment` 和清洗后的文件名；Content-Type 分别为 `application/pdf`、`application/msword`、`application/vnd.openxmlformats-officedocument.wordprocessingml.document`。对象不可见返回 404；发布者对仍可见的已拒绝、已撤回、已失效或招聘已删除的申请下载返回 403；申请人本人可下载保留文件；文件实际缺失返回 404，不暴露物理路径。发布者读取他人简历写审计，文件流仍携带请求 ID；敏感详情和下载响应须使用 `Cache-Control: private, no-store`。
 
 上传示例：
 
@@ -611,7 +609,7 @@ const response = await fetch(`/api/v1/recruitments/${recruitmentId}/applications
 
 ### 6.3 修改、撤回与处理
 
-`PATCH /applications/{id}` 使用 multipart，接受可选的 `note`、`resume`，至少提供一项。省略的字段不变，空字符串 note 清空说明，文件不能通过空值删除。仅申请人本人在申请仍为 processing、招聘未删除且仍处于开放或关闭后七天处理窗口内可修改。成功 200 返回 ApplicationDetail，置未读修改标记并通知发布者；旧文件在事务成功提交后才清理，失败保留原文件。
+`PATCH /applications/{id}` 使用 multipart，接受可选的 `note`、`resume`，至少提供一项。省略的字段不变，空字符串 note 清空说明，文件不能通过空值删除。仅申请人本人在申请仍为 processing、招聘未删除且仍处于开放或关闭后七天处理窗口内可修改。实质修改成功返回 200 和 ApplicationDetail，置未读修改标记并通知发布者。替换简历时事务回滚保留原文件，提交后删除旧文件，文件删除失败由清理任务重试。
 
 实际发生的申请修改、撤回、接受、拒绝及暂留标记变化，均在业务事务中写入 `application_update` 审计记录；重复暂留/取消暂留和只读已阅确认不另记。有效窗口内仅重复提交相同说明且未上传新文件时，返回当前详情，不更新版本、未读修改标记、通知或审计。上传新文件仍作为一次申请更新处理。审计不保存申请说明或简历内容。
 
@@ -636,7 +634,7 @@ hold/unhold 在仍满足操作条件且标记已是目标值时返回当前记�
 
 状态变更持久化于 `application_status_history`，记录申请及招聘、前后状态、原因、操作者、业务生效时间与实际记录时间。覆盖接受、主动拒绝、撤回、满员或超时自动拒绝、发布者注销自动拒绝（`publisher_cancelled`）及删除失效；暂留、已阅和说明修改不产生状态变更行。事件与业务同事务提交，重复动作不重复写入。
 
-旧记录不回填推测事件；历史已删除招聘仅修复接受人数。现有 HTTP 详情结构保持不变，历史表用于受控追溯，不提供额外的私有信息查询入口。
+状态历史仅供受控审计。客户端通过申请详情读取当前结果。
 
 ## 7. 通知接口
 
@@ -815,4 +813,4 @@ Conversation 返回 `id`、`peer`（公开编号、昵称、身份）、`last_me
 
 发送成功后，用响应中的消息编号合并页面数据。回到会话、定时刷新或收到发送响应时，可重新读取最近消息、会话摘要及未读总数，并按编号去重。对方消息实际显示后再提交回执。所有写请求须携带会话 Cookie 和当前 CSRF 令牌，见第 3.2 节。
 
-当前前端的 `src/data/index.ts` 注入演示聊天仓储。替换 HTTP 实现时，`MessageRepository.openWith` 需能接收首次联系来源，并补接未读数、已读回执。将公开编号和昵称映射到前端 `PublicUser.id/name`，将 `content` 映射到 `Message.text`。会话和消息编号在后端为整数，页面可转为字符串，提交已读回执时须传回 JSON 整数。聊天页原有的会话、消息请求分别取 100、200 条，接入后每页最多取 50 条并按需翻页。
+会话和消息编号为 JSON 整数。每页最多 50 条，使用消息编号提交已读回执。

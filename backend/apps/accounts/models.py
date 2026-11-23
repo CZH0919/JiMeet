@@ -191,11 +191,12 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class RegistrationMailRequest(models.Model):
-    """注册邮件发送额度流水，包含失败投递和已注册邮箱的受理请求。"""
+    """注册及登录验证码的共享发送额度，记录 SMTP 是否接受该次投递。"""
 
     email_key = models.CharField(max_length=64)
     ip_key = models.CharField(max_length=64)
     requested_at = models.DateTimeField(db_index=True)
+    delivered = models.BooleanField(null=True)
 
     class Meta:
         db_table = "registration_mail_request"

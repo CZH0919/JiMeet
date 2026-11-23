@@ -1,13 +1,7 @@
 import type { Conversation, Message, Page, PublicUser } from '@/domain/models';
 import type { MessageRepository } from '@/data/ports';
 
-/**
- * 站内聊天本地演示仓储。
- *
- * 后端在 Sprint2 未交付聊天接口（`api.md` §1 明确列为未提供），
- * 因此该模块只用于界面走查：数据保存在 localStorage，不写入任何后端。
- * 后端上线后按同一 `MessageRepository` 端口替换为 HTTP 实现即可，页面无需改动。
- */
+/** 浏览器本地聊天演示仓储，数据保存在 localStorage。 */
 
 const STORAGE_KEY = 'jiyu.demo.chat.v1';
 

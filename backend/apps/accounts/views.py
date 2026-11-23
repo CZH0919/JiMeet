@@ -1,5 +1,6 @@
 """账号与开发会话的 HTTP 入口，完整请求与字段契约见 backend/design_file/api.md。"""
 from collections.abc import Mapping
+from ipaddress import ip_address
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
@@ -46,9 +47,16 @@ def _client_ip(request) -> str:
         request: DRF 请求。
 
     Returns:
-        str: REMOTE_ADDR；缺失时为空字符串（对应键不计数）。
+        str: 直连时取对端地址；受信任的 Unix 套接字取代理覆写的客户端地址。
     """
-    return (request._request.META.get("REMOTE_ADDR") or "").strip()
+    peer = (request.META.get("REMOTE_ADDR") or "").strip()
+    if peer or not getattr(settings, "TRUST_HTTPS_PROXY", False):
+        return peer
+    try:
+        return str(ip_address(request.META.get("HTTP_X_REAL_IP", "")))
+    except ValueError:
+        # 来源缺失时共用一个限流键。
+        return "127.0.0.1"
 
 
 def _validate_auth_payload(request, serializer_class, *, kind: str) -> dict:

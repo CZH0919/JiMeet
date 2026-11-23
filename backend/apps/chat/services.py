@@ -148,7 +148,7 @@ def purge_expired_messages(*, batch_size=500, moment=None):
 
     Args:
         batch_size: 单批处理的消息数，须为正整数。
-        moment: 本轮统一到期判断时刻，默认使用业务时钟。
+        moment: 用于判定消息到期的统一时刻，默认使用业务时钟。
 
     Returns:
         int: 实际删除的消息条数。重复执行不重复计数。

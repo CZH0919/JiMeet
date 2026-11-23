@@ -138,7 +138,7 @@ class AnnouncementListView(PrivateAPIView):
 
 
 class AnnouncementDetailView(PrivateAPIView):
-    """公告详情与本人删除；公告自 Sprint3 起不可编辑（PATCH 关闭）。"""
+    """读取公告详情，或由仍具管理员权限的作者删除公告。"""
 
     def get(self, request, announcement_id):
         """GET /api/v1/announcements/{id}：公告详情。

@@ -133,7 +133,8 @@ def _send_code(*, purpose: str, email: str, ip: str, session: SessionBase) -> No
         )
     except (OSError, ValueError, InvalidMailer) as exc:
         logger.warning("%s邮件投递失败（%s）", label, type(exc).__name__)
-        raise _unavailable() from None
+        sent = 0
+    RegistrationMailRequest.objects.filter(pk=reservation.pk).update(delivered=sent == 1)
     if sent != 1:
         raise _unavailable()
     expiry = reservation.requested_at + CODE_TTL

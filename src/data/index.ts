@@ -7,7 +7,7 @@ import { useSession } from '@/stores/session';
  * 依赖注入的唯一开关。
  *
  * - 账号、招聘、公告、申请、通知、治理：后端 HTTP（data/http）
- * - 站内聊天：后端未交付，使用本地演示仓储（data/mock）
+ * - 站内聊天：使用浏览器本地演示仓储（data/mock）
  *
  * UI 层统一从 `repo` 取实例，不感知底层来源。
  */

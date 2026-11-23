@@ -150,6 +150,7 @@ class RegistrationVerificationTest(TxTestCase):
         self.assertNotIn("private upstream diagnostic", exposed)
         self.assertNotIn(self.email, exposed)
         self.assertFalse(RegistrationVerification.objects.get().code_digest)
+        self.assertIs(RegistrationMailRequest.objects.get().delivered, False)
         self.assertEqual(self.send().status_code, 429)
 
     def test_failed_resend_keeps_previous_unexpired_code(self):
@@ -160,6 +161,8 @@ class RegistrationVerificationTest(TxTestCase):
             with patch("apps.accounts.verification.send_mail", return_value=0):
                 self.assertEqual(self.send().status_code, 503)
             self.assertEqual(self.verify(code).status_code, 200)
+            outcomes = RegistrationMailRequest.objects.order_by("requested_at").values_list("delivered", flat=True)
+            self.assertEqual(list(outcomes), [True, False])
 
     def test_superseded_smtp_completion_cannot_reactivate_old_code(self):
         start = clock.now()
