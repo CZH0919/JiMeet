@@ -1,4 +1,5 @@
 """注册验证码的会话约束、投递状态、发送额度及并发回归。"""
+import re
 import smtplib
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -46,16 +47,28 @@ class RegistrationVerificationTest(TxTestCase):
         self.assertFalse(RegistrationMailRequest.objects.exists())
         self.assertFalse(mail.outbox)
 
-    def test_registered_address_same_receipt_without_delivery_or_grant(self):
+    def test_registered_address_same_receipt_with_delivery_and_post_verify_hint(self):
+        """发码受理与投递对新旧邮箱一致；仅验码成功后提示已注册，不覆盖账号。"""
         user = make_user(email="member@tongji.edu.cn", password="Member#2026!")
+        password_hash = user.password
         first = self.send(user.email.upper())
+        self.assertEqual((first.status_code, first.data["data"]), (200, {"resend_after": 60, "expires_in": 300}))
         other = self.send()
-        self.assertEqual((first.status_code, first.data["data"]), (other.status_code, other.data["data"]))
-        self.assertEqual(other.data["data"], {"resend_after": 60, "expires_in": 600})
-        self.assertEqual([m.to for m in mail.outbox], [[self.email]])
+        self.assertEqual((other.status_code, other.data["data"]), (200, {"resend_after": 60, "expires_in": 300}))
+        self.assertEqual([m.to for m in mail.outbox], [[user.email], [self.email]])
         self.assertEqual(self.send(user.email).status_code, 429)
-        self.assertEqual(RegistrationVerification.objects.count(), 1)
         self.assertIsNone(user.email_verified_at)
+
+        code = re.search(r"验证码为 ([0-9]{6})", mail.outbox[0].body).group(1)
+        result = self.verify(code, email=user.email.upper())
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.data["data"], {"expires_in": 0, "account_exists": True})
+        hint = self.client.post_json(REGISTER_URL, dict(VALID, email=user.email))
+        self.assertEqual(hint.status_code, 400)
+        self.assertEqual(hint.data["data"]["details"]["email"], "该邮箱已注册，请登录")
+        user.refresh_from_db()
+        self.assertEqual(user.password, password_hash)
+        self.assertFalse(User.objects.filter(email=self.email).exists())
 
     def test_session_email_and_code_are_bound(self):
         with patch("apps.accounts.verification.secrets.randbelow", return_value=39):
@@ -70,7 +83,7 @@ class RegistrationVerificationTest(TxTestCase):
         self.assertEqual(self.client.post_json(REGISTER_URL, VALID).status_code, 400)
         result = self.verify(code)
         self.assertEqual(result.status_code, 200)
-        self.assertEqual(result.data["data"], {"expires_in": 600})
+        self.assertEqual(result.data["data"], {"expires_in": 600, "account_exists": False})
         self.assertEqual(self.verify(code).status_code, 400)
         self.assertFalse(User.objects.exists())
         self.assertEqual(CsrfFlowClient().post_json(REGISTER_URL, VALID).status_code, 400)

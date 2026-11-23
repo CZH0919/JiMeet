@@ -192,8 +192,16 @@ class RegistrationMailRequest(models.Model):
 
 
 class RegistrationVerification(models.Model):
-    """单个邮箱在一个会话中的最新投递、有效验证码或待消费注册资格。"""
+    """单个用途下一个邮箱在一个会话中的最新投递、有效验证码或待消费核验资格。
 
+    `purpose` 区分注册与登录验证码（registration / login），两种验证码分别绑定
+    用途、邮箱和会话，共享同邮箱的重发间隔与发送额度。
+    """
+
+    PURPOSE_REGISTRATION = "registration"
+    PURPOSE_LOGIN = "login"
+
+    purpose = models.CharField("用途", max_length=16, default=PURPOSE_REGISTRATION)
     email_key = models.CharField(max_length=64)
     session_key_hash = models.CharField(max_length=64)
     latest_request = models.ForeignKey(
@@ -207,7 +215,14 @@ class RegistrationVerification(models.Model):
     class Meta:
         db_table = "registration_verification"
         constraints = [
-            models.UniqueConstraint(fields=["email_key", "session_key_hash"], name="reg_verify_email_session_uniq"),
+            models.UniqueConstraint(
+                fields=["purpose", "email_key", "session_key_hash"],
+                name="reg_verify_purpose_email_session_uniq",
+            ),
+            models.CheckConstraint(
+                condition=Q(purpose__in=["registration", "login"]),
+                name="reg_verify_purpose_chk",
+            ),
             models.CheckConstraint(
                 condition=(
                     Q(code_digest="", code_expires_at__isnull=True)

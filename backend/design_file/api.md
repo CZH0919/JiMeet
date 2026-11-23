@@ -15,6 +15,7 @@
 | POST | `/auth/register/send-code` | 可用 |
 | POST | `/auth/register/verify-code` | 可用 |
 | POST | `/auth/register` | 可用 |
+| POST | `/auth/login/send-code` | 可用 |
 | POST | `/auth/login` | 可用 |
 | POST | `/auth/dev-login` | 仅开发环境 |
 | POST | `/auth/logout` | 可用 |
@@ -57,7 +58,7 @@
 
 `/applications/{id}/read` 用于确认申请修改；通知已读使用 `/notifications/{id}/read` 或 `/notifications/read-all`。
 
-账号注册通过同济 SMTP 校验邮箱，已有账号凭邮箱和密码登录。业务通知通过站内通知送达。学校 SSO、聊天、推荐、通用用户主页和软删除恢复尚未提供。
+账号注册通过同济 SMTP 校验邮箱；已有账号凭邮箱加密码或邮箱加验证码登录。业务通知通过站内通知送达。学校 SSO、聊天、推荐、通用用户主页和软删除恢复尚未提供。
 
 ### 1.1 运行约定
 
@@ -189,7 +190,7 @@ export default defineConfig(({ mode }) => {
 ### 3.2 Session、CSRF 与隐私确认顺序
 
 1. `GET /auth/csrf` 获取 `data.csrf_token` 并接收 `csrftoken` Cookie。
-2. 新注册依次调用 4.3 节的发码、验码、建号接口。已有账号调用 `POST /auth/login`。所有写请求携带 Cookie 和 `X-CSRFToken`。
+2. 新注册依次调用 4.3 节的发码、验码、建号接口。已有账号调用 `POST /auth/login`，凭邮箱加密码或邮箱加验证码（先经 4.4.1 发码）。所有写请求携带 Cookie 和 `X-CSRFToken`。
 3. 发码成功时浏览器保存匿名 `sessionid`。注册或登录成功后再次 `GET /auth/csrf` 刷新令牌，继续使用服务器设置的会话 Cookie。
 4. `GET /me` 读取本人身份及 `privacy_consented`。**只有用户明确确认告知后**才调用 `POST /me/privacy-consent`；登录不等于同意，不能自动确认。
 5. 后续 POST/PATCH/DELETE 携带当前 CSRF 令牌。退出后丢弃前端缓存的本人资料；再次登录重新走上述流程。
@@ -261,13 +262,15 @@ async function confirmPrivacyConsent() {
 
 #### 4.3.1 POST /auth/register/send-code
 
-请求为 `{"email":"student@tongji.edu.cn"}`。首次受理建立匿名会话。成功返回 HTTP 200，`data={"expires_in":600,"resend_after":60}`。两项单位均为秒，分别表示验证码有效期与重发间隔。该响应表示请求已受理。已注册邮箱得到相同响应，不重复发信或变更账号。
+请求为 `{"email":"student@tongji.edu.cn"}`。首次受理建立匿名会话。成功返回 HTTP 200，`data={"expires_in":300,"resend_after":60}`。两项单位均为秒，分别表示验证码有效期（5 分钟）与重发间隔。该响应表示请求已受理。已注册邮箱得到相同受理响应并照常投递验证码，不变更账号；此时不提示是否已注册，重复注册提示在验码成功后给出。
 
 同一邮箱 60 秒内只受理一次。默认滚动限额为单邮箱 10 次/24 小时、单来源 IP 20 次/小时、全局 100 次/24 小时。来源取服务端连接的 `REMOTE_ADDR`。预占额度后才尝试投递，投递失败也计入本次额度。超限返回 429 `RATE_LIMITED`，邮件服务不可用返回 503 `EMAIL_DELIVERY_UNAVAILABLE`。同一会话对同一邮箱成功重发后仅最新验证码可用，旧注册资格也随之失效。
 
 #### 4.3.2 POST /auth/register/verify-code
 
-请求为 `{"email":"student@tongji.edu.cn","code":"012345"}`。`code` 是六位 ASCII 数字**字符串**，保留前导零。须使用发码时的邮箱和会话。验证码自发码预约起 10 分钟有效。成功返回 HTTP 200，`data={"expires_in":600}`，表示该会话自核验起 10 分钟内可完成一次注册，此时尚未创建账号或登录。
+请求为 `{"email":"student@tongji.edu.cn","code":"012345"}`。`code` 是六位 ASCII 数字**字符串**，保留前导零。须使用发码时的邮箱和会话。验证码自发码预约起 5 分钟有效。成功返回 HTTP 200，`data={"expires_in":600,"account_exists":false}`：`expires_in` 表示该会话自核验起 10 分钟内可完成一次注册，此时尚未创建账号或登录。
+
+验码成功后服务端才提示邮箱是否已注册：`account_exists` 为 `true` 时 `expires_in` 为 `0`，前端提示“已注册，请登录”，此时不创建账号、不自动登录已有账号。发码响应与验码失败响应均不区分是否已注册。
 
 错误、过期、已使用或不匹配的验证码返回 400 `VALIDATION_ERROR`，详见 `data.details.code`。在匹配的有效验证码上连续输错 5 次后该码作废。核验资格由服务端保存，前端在同一会话中显示密码设置表单即可。
 
@@ -279,34 +282,47 @@ async function confirmPrivacyConsent() {
 | --- | --- | --- |
 | email | 是 | 合法邮箱，最多 254 字符；去首尾空白并按小写规范化后，域名须精确等于 `tongji.edu.cn` |
 | password | 是 | 8～128 字符；须通过 Django 密码验证器（与邮箱/姓名不相似、非常见弱密码、非纯数字） |
+| password_confirm | 是 | 与 `password` 完全一致 |
 | name | 是 | 去首尾空白后 1～32 字；仅作未核验展示信息，不作授权依据 |
 | nickname | 否 | 1～32 字；缺省由服务端生成 `同学_` + 随机字符，不取自真实姓名或邮箱前缀 |
-| role | 否 | `student`（默认）或 `teacher`，仅作展示与称谓标签 |
+| role | 是 | `student` 或 `teacher`，必填展示与称谓标签，注册后本人不可修改，不作授权依据 |
 
 行为与错误：
 
 - 成功 201：创建普通账号（`is_admin=false`、`privacy_consented=false`）、建立会话并轮换会话键与 CSRF 令牌；返回本人资料（字段同 `GET /me`），不返回密码摘要或内部认证标识（`real_id`、`sso_subject` 等）。内部兼容标识由服务端生成，客户端不可指定。
-- 未知字段或携带 `is_admin`、`is_staff` 等权限字段：400 `VALIDATION_ERROR`，不建账号、不赋权。
-- 无匹配资格、已消费或资格过期返回 400 `VALIDATION_ERROR`，`data.details.verification` 提示重新验证。建号时撞邮箱唯一约束返回 400，详情字段为 `email`。两者均不覆盖已有账号。
+- 未知字段或携带 `is_admin`、`is_staff` 等权限字段：400 `VALIDATION_ERROR`，不建账号、不赋权；资料接口同样拒绝客户端授予管理员权限。
+- 两次密码不一致：400 `VALIDATION_ERROR`，`data.details.password_confirm` 提示。
+- 无匹配资格、已消费或资格过期返回 400 `VALIDATION_ERROR`，`data.details.verification` 提示重新验证。建号时撞邮箱唯一约束（含大小写变体与并发注册）返回 400，`data.details.email` 提示“该邮箱已注册，请登录”。两者均不覆盖已有账号、不自动登录已有账号。
 - 邮箱或密码不合规：400 `VALIDATION_ERROR`，`details` 指明字段规则。
 - 失败限流与 CSRF 校验同 4.4 口径；超限 429 `RATE_LIMITED`。
 - 资格消费与建号在同一事务内完成。密码不合规可在资格有效期内更正并重试。响应和日志不展示验证码、密码或会话凭据。
 
-### 4.4 POST /auth/login（公开，强制 CSRF）
+### 4.4 登录（公开，强制 CSRF）
 
-请求为 JSON：
+登录支持密码或验证码二选一。两接口仅接收 `application/json`，匿名请求也强制 CSRF，响应 `Cache-Control: private, no-store`。
+
+#### 4.4.1 POST /auth/login/send-code
+
+请求为 `{"email":"student@tongji.edu.cn"}`。投递登录验证码，绑定用途、邮箱和会话，5 分钟有效。受理响应为 `data={"expires_in":300,"resend_after":60}`，对已注册与未注册邮箱一致（发码不提示注册状态，语义同 4.3.1）。验证码与注册验证码共享同邮箱 60 秒重发间隔及发送额度（4.3.1 的滚动限额与 429/503 口径相同）。
+
+#### 4.4.2 POST /auth/login
+
+请求为 JSON，`password` 与 `code` 恰好提供一种：
 
 | 字段 | 必填 | 约束 |
 | --- | --- | --- |
 | email | 是 | 同注册的邮箱规范化规则 |
-| password | 是 | 字符串，1～128 字符 |
+| password | 二选一 | 字符串，1～128 字符 |
+| code | 二选一 | 六位 ASCII 数字字符串，保留前导零 |
 
 行为与错误：
 
 - 成功 200：建立会话并轮换会话键与 CSRF 令牌，返回本人资料。
-- 不存在邮箱、错误密码、不可用密码：统一 401 `AUTH_FAILED`，提示一致，不泄露账号是否存在。
-- 凭据正确但账号已停用：403 `FORBIDDEN`，不建立会话。
-- **失败限流**：注册与登录分别计数；邮箱与来源 IP 的键均只保存 SHA-256 摘要。窗口为 600 秒，同一邮箱键累计 5 次或同一 IP 键累计 20 次失败后返回 429 `RATE_LIMITED`，窗口滑过后恢复；成功注册或登录清除对应操作的邮箱键计数。字段校验、密码策略、重复注册及认证失败均计数，每次失败对有效邮箱键与 IP 各累计一次；邮箱缺失或不可解析、JSON 格式错误只按 IP 计数。CSRF 或不支持的媒体类型被拒绝时不计入认证失败。计数落库，并发失败不丢计数。
+- 密码登录：不存在邮箱、错误密码、不可用密码统一 401 `AUTH_FAILED`，提示一致，不泄露账号是否存在；凭据正确但账号已停用 403 `FORBIDDEN`，不建立会话。
+- 验证码登录：验证码绑定发码时的用途、邮箱和会话，成功后一次性消费；仅建立已注册、启用账号的会话。错误、过期、已消费或会话不匹配的验证码返回 400 `VALIDATION_ERROR`（`data.details.code`），连续输错 5 次该码作废；验证码正确但账号不存在或不可用返回 401 `AUTH_FAILED`，账号停用返回 403。串用注册验证码不能登录（用途隔离）。
+- `password` 与 `code` 同时提供或同时缺失：400 `VALIDATION_ERROR`。
+- SMTP 故障不影响密码登录与已有会话；邮件服务不可用时不返回验证码登录的投递承诺（4.4.1 返回 503）。
+- **失败限流**：注册与登录分别计数；邮箱与来源 IP 的键均只保存 SHA-256 摘要。窗口为 600 秒，同一邮箱键累计 5 次或同一 IP 键累计 20 次失败后返回 429 `RATE_LIMITED`，窗口滑过后恢复；成功注册或登录清除对应操作的邮箱键计数。字段校验、密码策略、重复注册及认证失败（含验证码错误）均计数，每次失败对有效邮箱键与 IP 各累计一次；邮箱缺失或不可解析、JSON 格式错误只按 IP 计数。CSRF 或不支持的媒体类型被拒绝时不计入认证失败。计数落库，并发失败不丢计数。
 - 匿名请求同样强制 CSRF 校验；失败不写入会话。
 
 ### 4.5 POST /auth/dev-login（公开，仅开发环境）

@@ -1,4 +1,10 @@
-"""新账号的邮件验证码、发送配额及一次性注册资格。"""
+"""新账号注册与登录的邮件验证码、发送配额及一次性核验资格。
+
+验证码按用途（registration / login）、邮箱和会话三重绑定，均为 5 分钟有效；
+同一邮箱的 60 秒重发间隔与发送额度在两种用途间共享。发码受理响应对新旧邮箱
+一致并照常投递，是否已注册仅在原会话成功验码后提示。密码与验证码只保存安全
+摘要，日志与接口响应不暴露原文。
+"""
 import logging
 import secrets
 from datetime import datetime, timedelta
@@ -14,12 +20,18 @@ from apps.core import clock
 from apps.core.errors import BizError, ErrorCode, ValidationFailed
 
 logger = logging.getLogger(__name__)
-CODE_TTL = timedelta(minutes=10)
+CODE_TTL = timedelta(minutes=5)
 GRANT_TTL = timedelta(minutes=10)
 RESEND_INTERVAL = timedelta(seconds=60)
 MAX_FAILURES = 5
 DAY = timedelta(days=1)
 SESSION_MARKER = "registration_email_started"
+PURPOSE_REGISTRATION = RegistrationVerification.PURPOSE_REGISTRATION
+PURPOSE_LOGIN = RegistrationVerification.PURPOSE_LOGIN
+_PURPOSE_TITLES = {
+    PURPOSE_REGISTRATION: ("【济遇】注册邮箱验证码", "注册"),
+    PURPOSE_LOGIN: ("【济遇】登录邮箱验证码", "登录"),
+}
 
 
 def _unavailable() -> BizError:
@@ -35,14 +47,18 @@ def _digest(purpose: str, value: str) -> str:
 
 
 def registration_session_key(session: SessionBase) -> str | None:
-    """返回已开始邮箱注册且仍有效的 Django 会话键。"""
+    """返回已开始邮箱验证且仍有效的 Django 会话键。"""
     return session.session_key if session.get(SESSION_MARKER) else None
 
 
 def _reserve(
-    email: str, ip: str, session: SessionBase,
-) -> tuple[RegistrationVerification, RegistrationMailRequest] | None:
-    """在短事务中分配滚动窗口额度及投递序号，已注册邮箱也占用相同额度。"""
+    purpose: str, email: str, ip: str, session: SessionBase,
+) -> tuple[RegistrationVerification, RegistrationMailRequest]:
+    """在短事务中分配滚动窗口额度及投递序号；已注册邮箱走同一路径。
+
+    投递受理不区分邮箱是否已注册，避免暴露注册状态；重复注册提示由
+    验码成功后的查询给出。
+    """
     email_key = _digest("email", email)
     ip_key = _digest("ip", ip)
     with transaction.atomic(durable=True):
@@ -68,48 +84,43 @@ def _reserve(
             session[SESSION_MARKER] = True
         if not session.session_key:
             session.create()
-        if User.objects.filter(email__iexact=email).exists():
-            return None
         challenge, _ = RegistrationVerification.objects.update_or_create(
-            email_key=email_key, session_key_hash=_digest("session", session.session_key),
+            purpose=purpose,
+            email_key=email_key,
+            session_key_hash=_digest("session", session.session_key),
             defaults={"latest_request": reservation},
         )
         return challenge, reservation
 
 
 def _code_digest(challenge: RegistrationVerification, code: str) -> str:
-    return _digest("code", f"{challenge.email_key}:{challenge.session_key_hash}:{code}")
+    return _digest(
+        "code", f"{challenge.purpose}:{challenge.email_key}:{challenge.session_key_hash}:{code}"
+    )
 
 
-def send_registration_code(*, email: str, ip: str, session: SessionBase) -> None:
-    """向已规范化的可注册邮箱投递六位码，绑定当前会话。已注册邮箱得到相同受理响应。
-
-    Args:
-        email: 已规范化的同济邮箱。
-        ip: 服务端连接的来源地址，用于发送额度控制。
-        session: 浏览器的 Django 会话，首次受理时创建。
+def _send_code(*, purpose: str, email: str, ip: str, session: SessionBase) -> None:
+    """向已规范化的同济邮箱投递六位码，绑定用途与当前会话。
 
     Raises:
         BizError: 超额返回 429，配置或投递不可用返回 503。
     """
+    title, label = _PURPOSE_TITLES[purpose]
     if "registration" not in settings.MAILERS or not settings.REGISTRATION_FROM_EMAIL:
         raise _unavailable()
-    reserved = _reserve(email, ip, session)
-    if reserved is None:
-        return
-    challenge, reservation = reserved
+    challenge, reservation = _reserve(purpose, email, ip, session)
     number = secrets.randbelow(1_000_000)
     code = f"{number:06d}"
     if constant_time_compare(challenge.code_digest, _code_digest(challenge, code)):
         code = f"{(number + 1) % 1_000_000:06d}"
     try:
         sent = send_mail(
-            "【济遇】注册邮箱验证码",
-            f"你的济遇注册验证码为 {code}，10 分钟内有效。请在申请验证码的页面输入。如非本人操作，可忽略本邮件。",
+            title,
+            f"你的济遇{label}验证码为 {code}，5 分钟内有效。请在申请验证码的页面输入。如非本人操作，可忽略本邮件。",
             settings.REGISTRATION_FROM_EMAIL, [email], using="registration",
         )
     except (OSError, ValueError, InvalidMailer) as exc:
-        logger.warning("注册邮件投递失败（%s）", type(exc).__name__)
+        logger.warning("%s邮件投递失败（%s）", label, type(exc).__name__)
         raise _unavailable() from None
     if sent != 1:
         raise _unavailable()
@@ -120,31 +131,73 @@ def send_registration_code(*, email: str, ip: str, session: SessionBase) -> None
         )
 
 
-def _locked_challenge(email: str, session_key: str | None) -> RegistrationVerification | None:
+def send_registration_code(*, email: str, ip: str, session: SessionBase) -> None:
+    """投递注册验证码；已注册邮箱得到相同受理响应并照常收信。"""
+    _send_code(purpose=PURPOSE_REGISTRATION, email=email, ip=ip, session=session)
+
+
+def send_login_code(*, email: str, ip: str, session: SessionBase) -> None:
+    """投递登录验证码；受理响应不区分邮箱是否已注册。"""
+    _send_code(purpose=PURPOSE_LOGIN, email=email, ip=ip, session=session)
+
+
+def _locked_challenge(
+    purpose: str, email: str, session_key: str | None
+) -> RegistrationVerification | None:
     if not session_key:
         return None
     return RegistrationVerification.objects.select_for_update().filter(
-        email_key=_digest("email", email), session_key_hash=_digest("session", session_key),
+        purpose=purpose,
+        email_key=_digest("email", email),
+        session_key_hash=_digest("session", session_key),
     ).first()
 
 
+def _check_code(challenge: RegistrationVerification | None, code: str, now: datetime) -> bool:
+    """核对验证码并累计错码次数；连续错 5 次作废当前码。
+
+    Returns:
+        bool: 验证码正确且未过期时为 True。
+    """
+    if challenge and challenge.code_expires_at and now < challenge.code_expires_at:
+        if constant_time_compare(challenge.code_digest, _code_digest(challenge, code)):
+            return True
+        challenge.failures += 1
+        if challenge.failures >= MAX_FAILURES:
+            challenge.code_digest = ""
+            challenge.code_expires_at = None
+        challenge.save(update_fields=["failures", "code_digest", "code_expires_at"])
+    return False
+
+
 def verify_registration_code(*, email: str, code: str, session_key: str | None) -> None:
-    """在原会话中校验邮箱验证码。成功生成短时注册资格，失败累计错误次数并返回 400。"""
+    """在原会话中校验注册邮箱验证码。成功生成短时注册资格，失败累计错误次数并返回 400。"""
     with transaction.atomic():
-        challenge = _locked_challenge(email, session_key)
+        challenge = _locked_challenge(PURPOSE_REGISTRATION, email, session_key)
         now = clock.now()
-        if challenge and challenge.code_expires_at and now < challenge.code_expires_at:
-            if constant_time_compare(challenge.code_digest, _code_digest(challenge, code)):
-                challenge.code_digest = ""
-                challenge.code_expires_at = None
-                challenge.verified_at = now
-                challenge.save(update_fields=["code_digest", "code_expires_at", "verified_at"])
-                return
-            challenge.failures += 1
-            if challenge.failures >= MAX_FAILURES:
-                challenge.code_digest = ""
-                challenge.code_expires_at = None
-            challenge.save(update_fields=["failures", "code_digest", "code_expires_at"])
+        if _check_code(challenge, code, now):
+            challenge.code_digest = ""
+            challenge.code_expires_at = None
+            challenge.verified_at = now
+            challenge.save(update_fields=["code_digest", "code_expires_at", "verified_at"])
+            return
+    raise ValidationFailed(details={"code": "验证码错误或已失效"})
+
+
+def consume_login_code(*, email: str, code: str, session_key: str | None) -> None:
+    """在登录事务中核对并一次性消费登录验证码。
+
+    成功即删除该用途下会话-邮箱的验证码记录；失败累计错误次数并返回 400。
+
+    Raises:
+        ValidationFailed: 验证码错误、过期、已消费或会话不匹配。
+    """
+    with transaction.atomic():
+        challenge = _locked_challenge(PURPOSE_LOGIN, email, session_key)
+        now = clock.now()
+        if _check_code(challenge, code, now):
+            challenge.delete()
+            return
     raise ValidationFailed(details={"code": "验证码错误或已失效"})
 
 
@@ -154,7 +207,7 @@ def consume_registration_grant(email: str, session_key: str | None) -> datetime:
     Raises:
         ValidationFailed: 邮箱与会话没有匹配资格或资格已过期。
     """
-    challenge = _locked_challenge(email, session_key)
+    challenge = _locked_challenge(PURPOSE_REGISTRATION, email, session_key)
     if not challenge or not challenge.verified_at or clock.now() >= challenge.verified_at + GRANT_TTL:
         raise ValidationFailed(details={"verification": "请先完成邮箱验证"})
     verified_at = challenge.verified_at

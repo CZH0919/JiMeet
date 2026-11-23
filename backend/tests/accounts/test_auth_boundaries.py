@@ -19,12 +19,16 @@ class AuthInputBoundaryTest(TxTestCase):
     def setUp(self):
         super().setUp()
         self.client = CsrfFlowClient()
-        self.payload = {"email": "boundary@tongji.edu.cn", "name": "审查用户", "password": "BoundaryPass!4827"}
+        self.payload = {
+            "email": "boundary@tongji.edu.cn", "name": "审查用户", "password": "BoundaryPass!4827",
+            "password_confirm": "BoundaryPass!4827", "role": "student",
+        }
 
     def test_registration_rejects_password_similar_to_name_or_email(self):
         for overrides in (
-            {"name": "CedarRiver!5928", "password": "CedarRiver!5928"},
-            {"email": "similarperson4827@tongji.edu.cn", "password": "similarperson4827"},
+            {"name": "CedarRiver!5928", "password": "CedarRiver!5928", "password_confirm": "CedarRiver!5928"},
+            {"email": "similarperson4827@tongji.edu.cn", "password": "similarperson4827",
+             "password_confirm": "similarperson4827"},
         ):
             with self.subTest(fields=sorted(overrides)):
                 response = self.client.post_json("/api/v1/auth/register", dict(self.payload, **overrides))
@@ -38,13 +42,17 @@ class AuthInputBoundaryTest(TxTestCase):
             with self.subTest(length=len(password)):
                 self.client.verify_email(f"length{index}@tongji.edu.cn")
                 response = self.client.post_json("/api/v1/auth/register", dict(
-                    self.payload, email=f"length{index}@tongji.edu.cn", password=password,
+                    self.payload, email=f"length{index}@tongji.edu.cn",
+                    password=password, password_confirm=password,
                 ))
                 self.assertEqual(response.status_code, expected)
 
     def test_field_and_business_failures_are_counted_once(self):
         make_user(email=self.payload["email"])
-        for changes in ({"password": "short"}, {"is_admin": True}, {"password": "1234567890"}, {}):
+        for changes in (
+            {"password": "short", "password_confirm": "short"}, {"is_admin": True},
+            {"password": "1234567890", "password_confirm": "1234567890"}, {},
+        ):
             with self.subTest(fields=sorted(changes)):
                 AuthFailure.objects.all().delete()
                 response = self.client.post_json("/api/v1/auth/register", dict(self.payload, **changes))
@@ -75,7 +83,8 @@ class AuthInputBoundaryTest(TxTestCase):
             for index in range(6):
                 self.client.defaults["REMOTE_ADDR"] = f"192.0.2.{index + 1}"
                 response = self.client.post_json("/api/v1/auth/register", dict(
-                    self.payload, email=" BOUNDARY@Tongji.Edu.Cn ", password="short",
+                    self.payload, email=" BOUNDARY@Tongji.Edu.Cn ",
+                    password="short", password_confirm="short",
                 ))
                 self.assertEqual(response.status_code, 400 if index < 5 else 429)
         with self.freeze_at(moment + ratelimit.WINDOW + timedelta(seconds=1)):

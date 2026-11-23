@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts import ratelimit, verification
+from apps.accounts.models import User
 from apps.accounts.serializers import (
     DevLoginSerializer,
     LoginSerializer,
@@ -26,6 +27,7 @@ from apps.accounts.serializers import (
 from apps.accounts.services import (
     PASSWORD_BACKEND,
     give_privacy_consent,
+    login_with_code,
     login_with_password,
     register_with_password,
     update_profile,
@@ -136,16 +138,29 @@ class RegistrationCodeView(RegistrationAPIView):
 
 
 class VerifyRegistrationCodeView(RegistrationAPIView):
-    """公开验码入口。成功后仅在原会话中授予该邮箱的一次性注册资格。"""
+    """公开验码入口。成功后仅在原会话中授予该邮箱的一次性注册资格。
+
+    仅在验码成功后提示邮箱是否已注册，此前发码与验码响应一律不区分。
+    """
 
     def post(self, request):
-        """接收 email 和六位字符串 code，返回资格有效秒数。无效或失效的验证码返回 400。"""
+        """接收 email 和六位字符串 code，返回资格有效秒数及是否已注册。
+
+        无效或失效的验证码返回 400；验码成功且邮箱已注册时 `account_exists`
+        为 true、`expires_in` 为 0，提示“已注册，请登录”，不建号、不自动登录。
+        """
         serializer = VerifyRegistrationCodeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         verification.verify_registration_code(
             **serializer.validated_data, session_key=verification.registration_session_key(request._request.session),
         )
-        return ok({"expires_in": int(verification.GRANT_TTL.total_seconds())})
+        account_exists = User.objects.filter(
+            email__iexact=serializer.validated_data["email"]
+        ).exists()
+        return ok({
+            "expires_in": 0 if account_exists else int(verification.GRANT_TTL.total_seconds()),
+            "account_exists": account_exists,
+        })
 
 
 class RegisterView(RegistrationAPIView):
@@ -176,20 +191,42 @@ class RegisterView(RegistrationAPIView):
         return created(profile_data(user))
 
 
+class LoginSendCodeView(RegistrationAPIView):
+    """公开登录发码入口，受理响应不区分邮箱是否已注册。"""
+
+    def post(self, request):
+        """POST /api/v1/auth/login/send-code：投递登录验证码。
+
+        验证码绑定用途、邮箱和会话，5 分钟有效；与注册验证码共享同邮箱
+        60 秒重发间隔及发送额度。超限返回 429，投递失败返回 503。
+        """
+        serializer = RegistrationEmailSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        verification.send_login_code(
+            email=serializer.validated_data["email"], ip=_client_ip(request), session=request._request.session,
+        )
+        return ok({
+            "expires_in": int(verification.CODE_TTL.total_seconds()),
+            "resend_after": int(verification.RESEND_INTERVAL.total_seconds()),
+        })
+
+
 class LoginView(APIView):
-    """邮箱密码登录公开入口；匿名请求强制 CSRF。"""
+    """邮箱登录公开入口，密码或验证码二选一；匿名请求强制 CSRF。"""
 
     authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
-        """POST /api/v1/auth/login：凭邮箱密码建立会话。
+        """POST /api/v1/auth/login：凭邮箱加密码或邮箱加验证码建立会话。
 
-        不存在邮箱、错误或不可用密码统一 401，不泄露账号是否存在；
-        凭据正确但账号停用返回 403。
+        密码登录：不存在邮箱、错误或不可用密码统一 401；凭据正确但停用 403。
+        验证码登录：仅建立已注册、启用账号的会话；验证码错误、过期或串用 400
+        并沿用错码限制，成功后一次性消费。SMTP 故障不影响密码登录及已有会话。
 
         Args:
-            request: JSON 必填 email、password；匿名请求也须通过 CSRF 校验。
+            request: JSON 必填 email，password 与 code 恰好提供一种；匿名请求也须
+                通过 CSRF 校验。
 
         Returns:
             Response: HTTP 200，data 为本人资料；建立 Session 并轮换 CSRF 令牌，
@@ -197,14 +234,22 @@ class LoginView(APIView):
 
         Raises:
             PermissionDenied: CSRF 校验失败，返回 403。
-            ValidationError: 输入字段不合法，返回 400。
+            ValidationError: 字段不合法或两种凭据未二选一，返回 400。
+            ValidationFailed: 验证码错误、过期或串用，返回 400。
             BizError: 凭据不合法 401 AUTH_FAILED；失败限流 429 RATE_LIMITED。
             Forbidden: 账号已停用，返回 403。
         """
         SessionAuthentication().enforce_csrf(request._request)
         data = _validate_auth_payload(request, LoginSerializer, kind=ratelimit.KIND_LOGIN)
-        user = login_with_password(ip=_client_ip(request), **data)
-        login(request._request, user)
+        session_key = verification.registration_session_key(request._request.session)
+        if "code" in data:
+            user = login_with_code(
+                email=data["email"], code=data["code"], session_key=session_key, ip=_client_ip(request),
+            )
+            login(request._request, user, backend=PASSWORD_BACKEND)
+        else:
+            user = login_with_password(email=data["email"], password=data["password"], ip=_client_ip(request))
+            login(request._request, user)
         response = ok(profile_data(user))
         response["Cache-Control"] = "private, no-store"
         return response

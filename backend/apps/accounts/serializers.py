@@ -30,24 +30,47 @@ class VerifyRegistrationCodeSerializer(RegistrationEmailSerializer):
 
 
 class RegisterSerializer(StrictSerializer):
-    """邮箱密码注册；密码策略由账号服务用 Django 验证器复核。"""
+    """邮箱验证码注册；姓名与身份必填，两次密码由服务层复核一致性。"""
 
     email = serializers.EmailField(max_length=254)
     password = serializers.CharField(
         min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH, trim_whitespace=False,
     )
+    password_confirm = serializers.CharField(
+        min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH, trim_whitespace=False,
+    )
     name = serializers.CharField(min_length=1, max_length=32)
     nickname = serializers.CharField(min_length=1, max_length=32, required=False)
-    role = serializers.ChoiceField(choices=Role.values, required=False)
+    role = serializers.ChoiceField(choices=Role.values)
 
 
 class LoginSerializer(StrictSerializer):
-    """邮箱密码登录；密码不做长度下限，兼容历史账号。"""
+    """邮箱登录，密码或六位验证码二选一；密码不做长度下限，兼容历史账号。"""
 
     email = serializers.EmailField(max_length=254)
     password = serializers.CharField(
-        max_length=MAX_PASSWORD_LENGTH, min_length=1, trim_whitespace=False,
+        max_length=MAX_PASSWORD_LENGTH, min_length=1, trim_whitespace=False, required=False,
     )
+    code = StrictCharField(
+        min_length=6, max_length=6, trim_whitespace=False, required=False,
+        validators=[RegexValidator(r"\A[0-9]{6}\Z", "请输入六位数字验证码")],
+    )
+
+    def validate(self, attrs):
+        """要求恰好提供密码或验证码之一。
+
+        Args:
+            attrs: 已校验字段映射。
+
+        Returns:
+            dict: 含且仅含 password 或 code 的映射。
+
+        Raises:
+            serializers.ValidationError: 两者同时提供或同时缺失。
+        """
+        if ("password" in attrs) == ("code" in attrs):
+            raise serializers.ValidationError("密码与验证码须且只须提供一种")
+        return attrs
 
 
 class DevLoginSerializer(StrictSerializer):
