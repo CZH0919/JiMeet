@@ -7,10 +7,7 @@ import { useSession } from '@/stores/session';
 import { toast } from '@/stores/toast';
 import { Button } from '@/components/ui/Button';
 
-/**
- * 站内纯文本聊天（设计稿 F8）。
- * 后端 Sprint2 未交付聊天接口，当前使用本地演示仓储，仅用于界面走查。
- */
+/** 使用聊天仓储读取会话、展示历史和发送纯文本消息。 */
 export function ChatPage() {
   const user = useSession((s) => s.user);
   const [activeId, setActiveId] = useState<string | null>(null);

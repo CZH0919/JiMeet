@@ -3,6 +3,7 @@ from apps.notifications import types
 
 _ALLOWED_CONTEXT = {"recruitment_title", "announcement_title", "status_label", "link", "auto", "reason_label"}
 _TEMPLATES = {
+    types.ANONYMOUS_WITHDRAWAL: ("申请已撤回", "您的招聘《{recruitment_title}》有一份申请因账号注销已撤回。"),
     types.APPLICATION_SUBMITTED: ("收到新申请", "您的招聘《{recruitment_title}》收到一份新申请。"),
     types.APPLICATION_ACCEPTED: ("申请已接受", "您对《{recruitment_title}》的申请已被接受。"),
     types.APPLICATION_REJECTED: ("申请已拒绝", "您对《{recruitment_title}》的申请已被拒绝。"),
@@ -13,6 +14,9 @@ _TEMPLATES = {
     types.RECRUITMENT_DELETED: ("申请已失效", "关联招聘《{recruitment_title}》已删除，您的申请已失效。"),
     types.ADMIN_REMOVED: ("招聘已被管理员删除", "您的招聘《{recruitment_title}》已被管理员删除。"),
     types.ANNOUNCEMENT_ADMIN_REMOVED: ("公告已被管理员删除", "您的公告《{announcement_title}》已被管理员删除。"),
+    types.ANNOUNCEMENT_REMOVED: ("公告已删除", "您的公告《{announcement_title}》已删除。"),
+    types.ANNOUNCEMENT_SUBMISSION_APPROVED: ("投稿审核通过", "您的公告投稿《{announcement_title}》已通过审核并发布。"),
+    types.ANNOUNCEMENT_SUBMISSION_REJECTED: ("投稿已驳回", "您的公告投稿《{announcement_title}》未通过审核。"),
 }
 
 

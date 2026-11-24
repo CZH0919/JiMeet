@@ -16,9 +16,15 @@ class NotificationTypesTest(SimpleTestCase):
     def test_types_and_templates(self):
         self.assertEqual(types.APPLICATION_EVENTS, {value for value in types.ALL if value.startswith("application_")})
         self.assertEqual(types.REQUIRES_APPLICATION, types.APPLICATION_EVENTS | {types.RECRUITMENT_UPDATED, types.RECRUITMENT_DELETED})
-        self.assertEqual(types.ANNOUNCEMENT_EVENTS, {types.ANNOUNCEMENT_ADMIN_REMOVED})
+        self.assertEqual(types.ANNOUNCEMENT_EVENTS, {
+            types.ANNOUNCEMENT_ADMIN_REMOVED, types.ANNOUNCEMENT_REMOVED,
+            types.ANNOUNCEMENT_SUBMISSION_APPROVED,
+        })
         for type in types.ALL:
-            context = {"announcement_title": "测试公告"} if type in types.ANNOUNCEMENT_EVENTS else {"recruitment_title": "测试招聘"}
+            if type.startswith("announcement_"):
+                context = {"announcement_title": "测试公告"}
+            else:
+                context = {"recruitment_title": "测试招聘"}
             title, content = templates.render(type, context)
             self.assertLessEqual(len(title), 100)
             self.assertIn("测试", content)

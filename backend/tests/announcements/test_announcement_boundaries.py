@@ -55,17 +55,18 @@ class AnnouncementBoundaryTest(TxTestCase):
             "https://example.com:not-a-port", "https://exa mple.com", "http:///missing",
             "ftp://example.com", "/relative",
         ):
-            for method in ("post", "patch"):
-                with self.subTest(link=link, method=method):
-                    if method == "post":
-                        response = self.client.post("/api/v1/announcements", dict(self.payload, link_url=link), format="json")
-                    else:
-                        response = self.client.patch(f"/api/v1/announcements/{announcement.pk}", {"link_url": link}, format="json")
-                    self.assertEqual(response.status_code, 400)
-                    self.assertEqual(response.data["code"], "VALIDATION_ERROR")
-                    self.assertEqual(Announcement.objects.count(), 1)
-                    self.assertEqual(AuditLog.objects.count(), before)
-                    self.assertFalse(Notification.objects.exists())
+            with self.subTest(link=link):
+                response = self.client.post("/api/v1/announcements", dict(self.payload, link_url=link), format="json")
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(response.data["code"], "VALIDATION_ERROR")
+                self.assertEqual(Announcement.objects.count(), 1)
+                self.assertEqual(AuditLog.objects.count(), before)
+                self.assertFalse(Notification.objects.exists())
+        # 编辑入口已收回
+        self.assertEqual(
+            self.client.patch(f"/api/v1/announcements/{announcement.pk}", {"link_url": "https://example.com"}, format="json").status_code,
+            405,
+        )
         announcement.refresh_from_db()
         self.assertIsNone(announcement.link_url)
 
@@ -74,8 +75,6 @@ class AnnouncementBoundaryTest(TxTestCase):
             with self.subTest(link=link):
                 response = self.client.post("/api/v1/announcements", dict(self.payload, link_url=link), format="json")
                 self.assertEqual(response.status_code, 201)
-                pk = response.data["data"]["id"]
-                self.assertEqual(self.client.patch(f"/api/v1/announcements/{pk}", {"link_url": None}, format="json").status_code, 200)
 
     def test_concurrent_governance_deletion_produces_one_notice(self):
         announcement = self._create()
@@ -91,25 +90,31 @@ class AnnouncementBoundaryTest(TxTestCase):
         self.assertEqual(Notification.objects.filter(announcement=announcement).count(), 1)
         self.assertEqual(AuditLog.objects.filter(action=actions.ANNOUNCEMENT_DELETE).count(), 1)
 
-    def test_concurrent_update_and_delete_do_not_resurrect(self):
-        announcement = self._create()
+    def test_concurrent_claim_allows_only_one_admin(self):
+        """两名管理员并发领取同一投稿，仅一人成功。"""
+        from apps.announcements.models import AnnouncementSubmission
 
-        def update():
+        submitter = make_user()
+        submission = services.create_submission(
+            submitter=submitter, title="竞争稿", content="正文",
+            time_kind="event", event_at=clock.now() + timedelta(days=2),
+        )
+        other_admin = make_user(is_admin=True)
+
+        def claim(actor):
             try:
-                services.update_announcement(announcement.pk, actor=self.actor, title="新标题")
+                services.claim_submission(submission.pk, actor=actor)
                 return 200
             except BizError as error:
                 return error.http_status
 
-        def remove():
-            services.soft_delete_announcement(announcement.pk, actor=self.actor)
-            return 200
-
-        outcomes = self._parallel([update, remove])
-        self.assertIn(outcomes[0], [200, 404])
-        self.assertEqual(outcomes[1], 200)
-        announcement.refresh_from_db()
-        self.assertIsNotNone(announcement.deleted_at)
+        outcomes = self._parallel([
+            lambda: claim(self.actor),
+            lambda: claim(other_admin),
+        ])
+        self.assertEqual(sorted(outcomes), [200, 409])
+        submission.refresh_from_db()
+        self.assertIn(submission.claimed_by_id, (self.actor.pk, other_admin.pk))
 
     def test_notification_failure_rolls_back_governance(self):
         announcement = self._create()

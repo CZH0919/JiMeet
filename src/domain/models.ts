@@ -1,5 +1,5 @@
 /**
- * 领域模型（对齐 `backend/design_file/api.md` Sprint2 契约）。
+ * 前端页面使用的领域模型。
  * UI 层只认这里定义的字段，后端 snake_case、枚举、可空语义都在 data/http/mappers.ts 收口。
  */
 

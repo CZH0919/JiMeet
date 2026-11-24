@@ -158,12 +158,22 @@ class Application(models.Model):
         return f"Application({self.pk})"
 
 
+class ResumeRemoval(models.Model):
+    """数据库访问已撤销、等待从私有存储移除的文件。不存身份或展示文件名。"""
+
+    path = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        db_table = "resume_removal"
+
+
 class ApplicationHistoryReason(models.TextChoices):
     ACCEPT = "accept", "接受"
     REJECT_MANUAL = "reject_manual", "主动拒绝"
     WITHDRAW = "withdraw", "撤回"
     AUTO_FULL = "auto_full", "满员自动拒绝"
     AUTO_WINDOW = "auto_window", "处理期限届满"
+    PUBLISHER_CANCELLED = "publisher_cancelled", "发布者注销"
     DELETE_INVALID = "delete_invalid", "招聘删除失效"
 
 
@@ -190,7 +200,7 @@ class ApplicationStatusHistory(models.Model):
             models.CheckConstraint(
                 condition=(
                     Q(from_status="processing", to_status="accepted", reason="accept")
-                    | Q(from_status="processing", to_status="rejected", reason__in=["reject_manual", "auto_full", "auto_window"])
+                    | Q(from_status="processing", to_status="rejected", reason__in=["reject_manual", "auto_full", "auto_window", "publisher_cancelled"])
                     | Q(from_status="processing", to_status="withdrawn", reason="withdraw")
                     | Q(from_status__in=["processing", "accepted"], to_status="invalid", reason="delete_invalid")
                 ),
@@ -198,7 +208,7 @@ class ApplicationStatusHistory(models.Model):
             ),
             models.CheckConstraint(
                 condition=(
-                    Q(reason__in=["auto_full", "auto_window"], actor__isnull=True)
+                    Q(reason__in=["auto_full", "auto_window", "publisher_cancelled"], actor__isnull=True)
                     | (Q(reason__in=["accept", "reject_manual", "withdraw", "delete_invalid"]) & Q(actor__isnull=False))
                 ),
                 name="app_history_actor_chk",

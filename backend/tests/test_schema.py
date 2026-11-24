@@ -7,17 +7,21 @@ from tests.base import TxTestCase
 
 BUSINESS_MODELS = [
     ("accounts", "User"),
+    ("accounts", "RegistrationMailRequest"),
+    ("accounts", "RegistrationVerification"),
     ("recruitments", "Recruitment"),
     ("recruitments", "Tag"),
     ("recruitments", "RecruitmentTag"),
     ("applications", "Application"),
     ("applications", "ApplicationStatusHistory"),
+    ("applications", "ResumeRemoval"),
     ("notifications", "Notification"),
     ("notifications", "EmailLog"),
     ("announcements", "Announcement"),
     ("audit", "AuditLog"),
     ("chat", "ChatConversation"),
     ("chat", "ChatMessage"),
+    ("chat", "ChatSendPause"),
 ]
 
 

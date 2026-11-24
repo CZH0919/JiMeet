@@ -15,6 +15,9 @@ class RecruitmentType(models.TextChoices):
     INTERNSHIP = "internship", "实习"
 
 
+PUBLISHABLE_RECRUITMENT_TYPES = (RecruitmentType.COMPETITION, RecruitmentType.ACTIVITY)
+
+
 class RecruitmentStatus(models.TextChoices):
     """招募状态枚举：开放、满员或关闭；删除由 deleted_at 单独表示。"""
     OPEN = "open", "开放"

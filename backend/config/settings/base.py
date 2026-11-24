@@ -153,6 +153,33 @@ MAX_HEADCOUNT_LIMIT = 200
 ALLOWED_EMAIL_DOMAINS = _env_list("ALLOWED_EMAIL_DOMAINS", "tongji.edu.cn")
 ALLOW_DEV_LOGIN = _env_bool("ALLOW_DEV_LOGIN", False)
 
+# 注册认证独立使用命名邮件后端，业务通知沿用站内渠道。
+REGISTRATION_HMAC_KEY = _env("JIMEET_REGISTRATION_HMAC_KEY", "")
+REGISTRATION_FROM_EMAIL = _env("JIMEET_SMTP_FROM", "")
+REGISTRATION_EMAIL_DAILY_LIMIT = int(_env("JIMEET_REGISTRATION_EMAIL_DAILY_LIMIT", "10"))
+REGISTRATION_IP_HOURLY_LIMIT = int(_env("JIMEET_REGISTRATION_IP_HOURLY_LIMIT", "20"))
+REGISTRATION_GLOBAL_DAILY_LIMIT = int(_env("JIMEET_REGISTRATION_GLOBAL_DAILY_LIMIT", "100"))
+MAILERS = {
+    "default": {"BACKEND": "django.core.mail.backends.smtp.EmailBackend", "OPTIONS": {"host": "localhost"}},
+}
+if (
+    REGISTRATION_FROM_EMAIL
+    and REGISTRATION_FROM_EMAIL == _env("JIMEET_SMTP_USER")
+    and _env("JIMEET_SMTP_PASSWORD")
+    and _env_bool("JIMEET_SMTP_USE_SSL", True)
+):
+    MAILERS["registration"] = {
+        "BACKEND": "django.core.mail.backends.smtp.EmailBackend",
+        "OPTIONS": {
+            "host": _env("JIMEET_SMTP_HOST", "smtp.tongji.edu.cn"),
+            "port": int(_env("JIMEET_SMTP_PORT", "465")),
+            "username": REGISTRATION_FROM_EMAIL,
+            "password": _env("JIMEET_SMTP_PASSWORD"),
+            "use_ssl": True,
+            "timeout": 12,
+        },
+    }
+
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_SECURE = False

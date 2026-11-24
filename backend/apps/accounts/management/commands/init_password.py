@@ -54,14 +54,14 @@ class Command(BaseCommand):
         Raises:
             CommandError: 账号不存在、已有可用密码、操作者不存在或密码不合规。
         """
-        user = User.objects.filter(email__iexact=options["email"].strip()).first()
+        user = User.objects.filter(email__iexact=options["email"].strip(), cancelled_at__isnull=True).first()
         if user is None:
             raise CommandError(f"账号不存在: {options['email']}")
         if user.has_usable_password():
             raise CommandError("账号已有可用密码，不能重复初始化")
         password = self._read_password()
         with transaction.atomic():
-            user = User.objects.select_for_update().filter(pk=user.pk).first()
+            user = User.objects.select_for_update().filter(pk=user.pk, cancelled_at__isnull=True).first()
             if user is None:
                 raise CommandError("目标账号已不存在")
             if user.has_usable_password():
@@ -80,6 +80,6 @@ class Command(BaseCommand):
             record(
                 actor=actor, action=actions.PASSWORD_INIT,
                 target_type="user", target_id=user.pk,
-                reason=f"管理命令初始化账号密码（目标 {user.email}）",
+                reason="管理命令初始化账号密码",
             )
         self.stdout.write(self.style.SUCCESS(f"已初始化账号密码: {user.email}"))

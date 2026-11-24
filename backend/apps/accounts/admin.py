@@ -24,11 +24,14 @@ class AccountChangeForm(UserChangeForm):
 @admin.register(User)
 class UserAdmin(DjangoUserAdmin):
     """
-    用户后台管理入口，维护用户资料与业务管理员标记 is_admin。
+    用户后台维护账号资料，业务管理员标记仅供查看。
 
     is_staff / is_superuser / groups / user_permissions 仅管理 Django Admin
     访问权限，业务权限仍只依据 is_admin。
     """
+
+    def has_change_permission(self, request, obj=None):
+        return (obj is None or obj.cancelled_at is None) and super().has_change_permission(request, obj)
 
     form = AccountChangeForm
     add_form = AccountCreationForm
@@ -36,7 +39,7 @@ class UserAdmin(DjangoUserAdmin):
     list_filter = ("role", "is_admin", "is_active", "is_staff")
     search_fields = ("real_id", "name", "nickname", "email")
     ordering = ("id",)
-    readonly_fields = ("uid", "last_login", "created_at", "updated_at")
+    readonly_fields = ("uid", "is_admin", "last_login", "created_at", "updated_at")
     fieldsets = (
         (None, {"fields": ("real_id", "password")}),
         (
@@ -56,6 +59,6 @@ class UserAdmin(DjangoUserAdmin):
     add_fieldsets = (
         (None, {"classes": ("wide",), "fields": (
             "real_id", "name", "email", "nickname", "role", "password1", "password2",
-            "is_active", "is_admin", "is_staff", "is_superuser",
+            "is_active", "is_staff", "is_superuser",
         )}),
     )

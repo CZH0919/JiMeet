@@ -4,9 +4,11 @@ from datetime import timedelta
 from threading import Barrier
 
 from django.db import close_old_connections, connections
+from django.test import override_settings
+from rest_framework.test import APIClient
 
 from apps.accounts import ratelimit
-from apps.accounts.models import AuthFailure, User
+from apps.accounts.models import AuthFailure, RegistrationVerification, User
 from apps.accounts.services import register_with_password
 from apps.core import clock
 from apps.core.errors import BizError
@@ -19,12 +21,42 @@ class AuthInputBoundaryTest(TxTestCase):
     def setUp(self):
         super().setUp()
         self.client = CsrfFlowClient()
-        self.payload = {"email": "boundary@tongji.edu.cn", "name": "审查用户", "password": "BoundaryPass!4827"}
+        self.payload = {
+            "email": "boundary@tongji.edu.cn", "name": "审查用户", "password": "BoundaryPass!4827",
+            "password_confirm": "BoundaryPass!4827", "role": "student",
+        }
+
+    def test_login_transport_domain_and_no_store(self):
+        url = "/api/v1/auth/login"
+        email = self.payload["email"]
+        credentials = {"email": email.upper(), "password": self.payload["password"]}
+        make_user(email=email, password=credentials["password"])
+        anonymous = APIClient(enforce_csrf_checks=True)
+        csrf = anonymous.post(url, credentials, format="json")
+        form = self.client.post(url, credentials, format="multipart", HTTP_X_CSRFTOKEN=self.client.csrf_token)
+        for response, expected in ((csrf, 403), (form, 415)):
+            self.assertEqual((response.status_code, response["Cache-Control"]), (expected, "private, no-store"))
+        self.assertFalse(AuthFailure.objects.exists())
+        for mode in ({"password": "test"}, {"code": "123456"}):
+            for domain in ("sub.tongji.edu.cn", "example.org"):
+                response = self.client.post_json(url, dict(mode, email="member@" + domain))
+                self.assertEqual((response.status_code, response["Cache-Control"]), (400, "private, no-store"))
+                self.assertIn("email", response.data["data"]["details"])
+        success = self.client.post_json(url, credentials)
+        self.assertEqual((success.status_code, success["Cache-Control"]), (200, "private, no-store"))
+
+    @override_settings(MAILERS={})
+    def test_both_mail_flows_report_the_same_outage(self):
+        for purpose in ("register", "login"):
+            response = self.client.post_json(f"/api/v1/auth/{purpose}/send-code", {"email": self.payload["email"]})
+            self.assertEqual((response.status_code, response.data["message"], response["Cache-Control"]),
+                             (503, "邮件发送服务暂时不可用，请稍后重试", "private, no-store"))
 
     def test_registration_rejects_password_similar_to_name_or_email(self):
         for overrides in (
-            {"name": "CedarRiver!5928", "password": "CedarRiver!5928"},
-            {"email": "similarperson4827@tongji.edu.cn", "password": "similarperson4827"},
+            {"name": "CedarRiver!5928", "password": "CedarRiver!5928", "password_confirm": "CedarRiver!5928"},
+            {"email": "similarperson4827@tongji.edu.cn", "password": "similarperson4827",
+             "password_confirm": "similarperson4827"},
         ):
             with self.subTest(fields=sorted(overrides)):
                 response = self.client.post_json("/api/v1/auth/register", dict(self.payload, **overrides))
@@ -36,14 +68,19 @@ class AuthInputBoundaryTest(TxTestCase):
             ("Ax!2937", 400), ("Ax!2937Q", 201), ("Az!79" * 25 + "Qx8", 201), ("Az!79" * 25 + "Qx89", 400),
         )):
             with self.subTest(length=len(password)):
+                self.client.verify_email(f"length{index}@tongji.edu.cn")
                 response = self.client.post_json("/api/v1/auth/register", dict(
-                    self.payload, email=f"length{index}@tongji.edu.cn", password=password,
+                    self.payload, email=f"length{index}@tongji.edu.cn",
+                    password=password, password_confirm=password,
                 ))
                 self.assertEqual(response.status_code, expected)
 
     def test_field_and_business_failures_are_counted_once(self):
         make_user(email=self.payload["email"])
-        for changes in ({"password": "short"}, {"is_admin": True}, {"password": "1234567890"}, {}):
+        for changes in (
+            {"password": "short", "password_confirm": "short"}, {"is_admin": True},
+            {"password": "1234567890", "password_confirm": "1234567890"}, {},
+        ):
             with self.subTest(fields=sorted(changes)):
                 AuthFailure.objects.all().delete()
                 response = self.client.post_json("/api/v1/auth/register", dict(self.payload, **changes))
@@ -74,10 +111,12 @@ class AuthInputBoundaryTest(TxTestCase):
             for index in range(6):
                 self.client.defaults["REMOTE_ADDR"] = f"192.0.2.{index + 1}"
                 response = self.client.post_json("/api/v1/auth/register", dict(
-                    self.payload, email=" BOUNDARY@Tongji.Edu.Cn ", password="short",
+                    self.payload, email=" BOUNDARY@Tongji.Edu.Cn ",
+                    password="short", password_confirm="short",
                 ))
                 self.assertEqual(response.status_code, 400 if index < 5 else 429)
         with self.freeze_at(moment + ratelimit.WINDOW + timedelta(seconds=1)):
+            self.client.verify_email(self.payload["email"])
             self.assertEqual(self.client.post_json("/api/v1/auth/register", self.payload).status_code, 201)
         self.assertFalse(AuthFailure.objects.filter(
             key_hash=ratelimit._key_hash("email", self.payload["email"]), kind=ratelimit.KIND_REGISTER,
@@ -119,12 +158,15 @@ class AuthInputBoundaryTest(TxTestCase):
 
     def test_concurrent_registration_preserves_email_uniqueness(self):
         gate = Barrier(2)
+        with self.freeze_at(clock.now() - timedelta(seconds=61)):
+            first_key = self.client.verify_email(self.payload["email"])
+        second_key = CsrfFlowClient().verify_email(self.payload["email"])
 
-        def register():
+        def register(session_key):
             close_old_connections()
             try:
                 gate.wait(timeout=10)
-                register_with_password(**self.payload)
+                register_with_password(session_key=session_key, **self.payload)
                 return 201
             except BizError as error:
                 return error.http_status
@@ -132,6 +174,7 @@ class AuthInputBoundaryTest(TxTestCase):
                 connections.close_all()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(register) for _ in range(2)]
+            futures = [pool.submit(register, key) for key in (first_key, second_key)]
             self.assertEqual(sorted(future.result(timeout=20) for future in futures), [201, 400])
         self.assertEqual(User.objects.filter(email=self.payload["email"]).count(), 1)
+        self.assertFalse(RegistrationVerification.objects.filter(verified_at__isnull=False).exists())

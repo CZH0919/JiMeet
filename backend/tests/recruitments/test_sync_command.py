@@ -3,6 +3,7 @@ from io import StringIO
 from unittest import mock
 
 from django.core.management import call_command
+from django.core.management.base import CommandError
 
 from apps.core import clock
 from apps.notifications.models import Notification
@@ -58,7 +59,7 @@ class SyncCommandTest(TxTestCase):
         output = StringIO()
         with clock.freeze(now), mock.patch("apps.notifications.mail.dispatch"), mock.patch(
             "apps.recruitments.management.commands.run_sync_recruitments.sync_recruitment", side_effect=sync,
-        ), self.assertLogs("apps.recruitments.management.commands.run_sync_recruitments", level="ERROR"):
+        ), self.assertLogs("apps.recruitments.management.commands.run_sync_recruitments", level="ERROR"), self.assertRaises(CommandError):
             call_command("run_sync_recruitments", stdout=output)
         self.assertIn("处理 1 个，失败 1 个，关闭 1 个", output.getvalue())
         first.refresh_from_db()
