@@ -11,6 +11,7 @@ BUSINESS_MODELS = [
     ("recruitments", "Tag"),
     ("recruitments", "RecruitmentTag"),
     ("applications", "Application"),
+    ("applications", "ApplicationStatusHistory"),
     ("notifications", "Notification"),
     ("notifications", "EmailLog"),
     ("announcements", "Announcement"),

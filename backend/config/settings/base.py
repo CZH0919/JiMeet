@@ -117,7 +117,10 @@ DATABASES = {
 AUTH_USER_MODEL = "accounts.User"
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+        "OPTIONS": {"user_attributes": ("email", "name")},
+    },
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
@@ -125,6 +128,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 AUTHENTICATION_BACKENDS = [
     "apps.accounts.backends.SSOBackend",
+    "apps.accounts.backends.EmailPasswordBackend",
     "django.contrib.auth.backends.ModelBackend",
 ]
 
@@ -145,7 +149,7 @@ MEDIA_ROOT = BASE_DIR / "var" / "media"
 # 简历等私有文件目录，不在任何静态/媒体 URL 映射之下。
 PRIVATE_FILE_ROOT = Path(_env("PRIVATE_FILE_ROOT") or BASE_DIR / "var" / "private")
 
-MAX_HEADCOUNT_LIMIT = 50
+MAX_HEADCOUNT_LIMIT = 200
 ALLOWED_EMAIL_DOMAINS = _env_list("ALLOWED_EMAIL_DOMAINS", "tongji.edu.cn")
 ALLOW_DEV_LOGIN = _env_bool("ALLOW_DEV_LOGIN", False)
 

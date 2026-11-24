@@ -1,0 +1,239 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * 颜色以 RGB 通道保存，供 Tailwind 生成 rgb(var(--x) / <alpha-value>)，
+ * 这样 `bg-primary/10`、`border-danger/25` 等透明度修饰符才可用。
+ */
+:root {
+  /* 品牌色：参考新 UI 稿的浅色卡片风格 */
+  --rgb-primary: 47 107 255;
+  --rgb-primary-hover: 31 86 224;
+  --rgb-primary-soft: 236 242 255;
+
+  --rgb-success: 18 157 97;
+  --rgb-success-soft: 231 248 239;
+  --rgb-warning: 194 118 15;
+  --rgb-warning-soft: 253 243 227;
+  --rgb-danger: 224 72 60;
+  --rgb-danger-soft: 253 238 236;
+  --rgb-muted: 152 162 179;
+  --rgb-muted-soft: 242 245 250;
+
+  --rgb-page: 245 248 253;
+  --rgb-surface: 255 255 255;
+  --rgb-line: 232 237 246;
+  --rgb-ink: 27 34 49;
+  --rgb-ink2: 103 113 127;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+
+  --shadow-card: 0 14px 36px -22px rgba(31, 64, 124, 0.35), 0 1px 2px rgba(31, 64, 124, 0.04);
+  --shadow-pop: 0 26px 64px -24px rgba(31, 64, 124, 0.4), 0 2px 8px rgba(31, 64, 124, 0.06);
+
+  --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: rgb(var(--rgb-page));
+  background-image:
+    radial-gradient(1200px 620px at 12% -12%, rgba(47, 107, 255, 0.1), transparent 62%),
+    radial-gradient(900px 520px at 96% 2%, rgba(122, 173, 255, 0.12), transparent 58%),
+    linear-gradient(180deg, #ffffff 0%, #f4f8fe 34%, #f7faff 100%);
+  background-attachment: fixed;
+  color: rgb(var(--rgb-ink));
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(47, 107, 255, 0.16);
+}
+
+/*
+ * 隐藏浏览器自带的密码显示按钮（Edge/IE 的 ::-ms-reveal、Chrome 的密码管理图标），
+ * 否则会和站内 PasswordInput 的「小眼睛」并排出现两个。
+ */
+input[type='password']::-ms-reveal,
+input[type='password']::-ms-clear {
+  display: none;
+}
+
+input[type='password']::-webkit-credentials-auto-fill-button,
+input[type='password']::-webkit-strong-password-auto-fill-button {
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d7deea;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c3ccdb;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  /* 页面统一宽度容器 */
+  .page-shell {
+    @apply mx-auto w-full max-w-[1180px] px-4 sm:px-6;
+  }
+
+  /* 白色卡片：新 UI 的主要容器 */
+  .panel {
+    @apply rounded-lg border border-line bg-surface shadow-card;
+  }
+
+  /* 表格化的列表行：白底 + 描边 + 悬停浮起 */
+  .list-row {
+    @apply rounded-md border border-line bg-surface transition-all duration-200;
+  }
+  .list-row:hover {
+    @apply border-primary/30 shadow-card;
+  }
+}
+
+/* ------------------------- DOCX 简历在线预览排版 ------------------------- */
+/* 文件内容在浏览器端解析成 HTML，这里只负责「像一份 A4 简历」的观感 */
+
+.docx-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 40px 44px 48px;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1b2231;
+  box-shadow: 0 10px 30px -20px rgba(31, 64, 124, 0.45);
+  font-size: 14px;
+  line-height: 1.75;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.docx-page .docx-p {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+}
+
+.docx-page .docx-blank {
+  height: 8px;
+  margin: 0;
+}
+
+.docx-page .docx-h2 {
+  margin: 18px 0 8px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.docx-page .docx-h3 {
+  margin: 16px 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.docx-page .docx-h4 {
+  margin: 14px 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.docx-page .docx-center {
+  text-align: center;
+}
+
+.docx-page .docx-right {
+  text-align: right;
+}
+
+.docx-page .docx-justify {
+  text-align: justify;
+}
+
+.docx-page .docx-underline {
+  text-decoration: underline;
+}
+
+.docx-page .docx-strike {
+  text-decoration: line-through;
+}
+
+.docx-page .docx-tab {
+  display: inline-block;
+  width: 2em;
+}
+
+.docx-page .docx-li {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+  padding-left: 2px;
+}
+
+.docx-page .docx-bullet {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin-top: 11px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.65;
+}
+
+.docx-page .docx-li-body {
+  flex: 1 1 auto;
+}
+
+.docx-page .docx-img {
+  max-width: 100%;
+  height: auto;
+  margin: 6px 0;
+  border-radius: 4px;
+}
+
+.docx-page .docx-table {
+  width: 100%;
+  margin: 10px 0;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.docx-page .docx-table td {
+  padding: 6px 8px;
+  border: 1px solid #e4e9f2;
+  vertical-align: top;
+}
+
+@media (max-width: 640px) {
+  .docx-page {
+    padding: 24px 18px 28px;
+  }
+}
+

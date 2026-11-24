@@ -7,6 +7,9 @@ PERMISSION_DENIED = "permission_denied"
 ANNOUNCEMENT_PUBLISH = "announcement_publish"
 ANNOUNCEMENT_UPDATE = "announcement_update"
 ANNOUNCEMENT_DELETE = "announcement_delete"
+ADMIN_GRANT = "admin_grant"
+ADMIN_REVOKE = "admin_revoke"
+PASSWORD_INIT = "password_init"
 
 ALL = frozenset(
     {
@@ -18,5 +21,11 @@ ALL = frozenset(
         ANNOUNCEMENT_PUBLISH,
         ANNOUNCEMENT_UPDATE,
         ANNOUNCEMENT_DELETE,
+        ADMIN_GRANT,
+        ADMIN_REVOKE,
+        PASSWORD_INIT,
     }
 )
+
+# 由受控管理命令触发、允许不带登录操作者的动作。
+SYSTEM_MANAGED = frozenset({PERMISSION_DENIED, ADMIN_GRANT, ADMIN_REVOKE, PASSWORD_INIT})

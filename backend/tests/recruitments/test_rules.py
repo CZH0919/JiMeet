@@ -6,7 +6,7 @@ from django.test import SimpleTestCase, override_settings
 from apps.core.errors import ValidationFailed
 from apps.recruitments import rules
 from apps.recruitments.policies import (
-    can_close, can_delete, can_edit, can_view_applications, publish_state_for_viewer,
+    can_close, can_delete, can_edit, can_govern_delete, can_view_applications, publish_state_for_viewer,
 )
 
 
@@ -26,11 +26,11 @@ class RulesTest(SimpleTestCase):
             with self.subTest(deadline=deadline), self.assertRaises(ValidationFailed):
                 rules.validate_deadline(deadline, self.now)
 
-    @override_settings(MAX_HEADCOUNT_LIMIT=50)
+    @override_settings(MAX_HEADCOUNT_LIMIT=200)
     def test_headcount(self):
-        for minimum, maximum in ((None, 1), (1, 50), (50, 50)):
+        for minimum, maximum in ((None, 1), (1, 200), (200, 200)):
             rules.validate_headcount(minimum, maximum)
-        for minimum, maximum in ((None, 0), (None, 51), (0, 3), (4, 3), (True, 3), (None, 1.5)):
+        for minimum, maximum in ((None, 0), (None, 201), (0, 3), (4, 3), (True, 3), (None, 1.5)):
             with self.subTest(minimum=minimum, maximum=maximum), self.assertRaises(ValidationFailed):
                 rules.validate_headcount(minimum, maximum)
 
@@ -51,20 +51,6 @@ class RulesTest(SimpleTestCase):
         self.r.deleted_at = self.now
         for check in (rules.is_apply_open, rules.is_editable, rules.is_publisher_deletable, rules.is_processable):
             self.assertFalse(check(self.r, self.now))
-
-    def test_retention_uses_earliest_event(self):
-        self.assertIsNone(rules.seven_day_deadline(self.r))
-        self.assertIsNone(rules.retention_starts_at(self.r))
-        self.assertIsNone(rules.retention_expires_at(self.r))
-        self.assertFalse(rules.is_retention_expired(self.r, self.now))
-        self.r.full_at = self.now
-        self.r.closed_at = self.now + timedelta(days=2)
-        self.r.deleted_at = self.now + timedelta(days=3)
-        end = self.now + timedelta(days=180)
-        self.assertEqual(rules.retention_starts_at(self.r), self.now)
-        self.assertEqual(rules.retention_expires_at(self.r), end)
-        self.assertFalse(rules.is_retention_expired(self.r, end - timedelta(seconds=1)))
-        self.assertTrue(rules.is_retention_expired(self.r, end))
 
     def test_closed_recruitment_is_not_editable_or_deletable(self):
         self.r.status = "closed"
@@ -91,17 +77,6 @@ class RulesTest(SimpleTestCase):
             publish_state_for_viewer(anonymous, self.r, self.now).can_apply, True,
         )
 
-    def test_retention_starts_from_earliest_of_each_field(self):
-        base = self.now
-        for field in ("closed_at", "full_at", "deleted_at"):
-            with self.subTest(earliest=field):
-                self.r.closed_at = self.r.full_at = self.r.deleted_at = None
-                for index, name in enumerate(("closed_at", "full_at", "deleted_at")):
-                    later = base + timedelta(days=index + 1)
-                    setattr(self.r, name, base if name == field else later)
-                self.assertEqual(rules.retention_starts_at(self.r), base)
-                self.assertEqual(rules.retention_expires_at(self.r), base + timedelta(days=180))
-
     def test_recruitment_permissions(self):
         publisher = SimpleNamespace(pk=1, is_authenticated=True, is_admin=False)
         admin = SimpleNamespace(pk=2, is_authenticated=True, is_admin=True)
@@ -114,7 +89,8 @@ class RulesTest(SimpleTestCase):
         self.assertTrue(publish_state_for_viewer(admin, self.r, self.now).can_apply)
         self.r.status = "full"
         self.assertFalse(can_delete(publisher, self.r, self.now))
-        self.assertTrue(can_delete(admin, self.r, self.now))
+        self.assertFalse(can_delete(admin, self.r, self.now))
+        self.assertTrue(can_govern_delete(admin, self.r))
         self.assertEqual(publish_state_for_viewer(admin, self.r, self.now).apply_blocked_reason, "not_open")
         self.r.deleted_at = self.now
         self.assertFalse(can_delete(admin, self.r, self.now))

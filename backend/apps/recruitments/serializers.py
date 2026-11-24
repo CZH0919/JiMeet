@@ -22,7 +22,7 @@ class RecruitmentWriteSerializer(StrictSerializer):
 
     title = StrictCharField(max_length=100)
     type = serializers.ChoiceField(choices=RecruitmentType.choices)
-    description = StrictCharField()
+    description = StrictCharField(max_length=5000)
     tag_ids = serializers.ListField(
         child=StrictIntegerField(min_value=1, max_value=MAX_RESOURCE_ID), allow_empty=False,
     )
@@ -64,9 +64,15 @@ class RecruitmentWriteSerializer(StrictSerializer):
 
 
 class RecruitmentDeleteSerializer(StrictSerializer):
-    """管理员删除原因在写服务中按操作者身份检查必填。"""
+    """本人删除原因可选，管理员身份不改变该入口的权限。"""
 
     reason = StrictCharField(required=False, max_length=500)
+
+
+class RecruitmentGovernanceSerializer(StrictSerializer):
+    """治理删除必须提供非空原因。"""
+
+    reason = StrictCharField(min_length=1, max_length=500)
 
 
 class RecruitmentQuerySerializer(StrictQuerySerializer):

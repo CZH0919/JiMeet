@@ -1,7 +1,4 @@
-"""私有简历的 HTTP 入口，完整请求与字段契约见 backend/design_file/api.md。
-
-需认证的入口先检查会话和 CSRF，分别拒绝为 401 和 403；非法查询或请求数据通常返回 400，不支持的媒体类型返回 415。异常由统一处理器转换为错误信封；简历下载成功直接返回文件流。
-"""
+"""私有简历的 HTTP 入口，完整请求与字段契约见 backend/design_file/api.md。"""
 
 from django.http import FileResponse
 
@@ -23,7 +20,7 @@ class ResumeDownloadView(PrivateAPIView):
             FileResponse: HTTP 200 的附件文件流，含安全展示名和格式 MIME；不使用 JSON 成功信封，禁止缓存。
 
         Raises:
-            BizError: 对象/文件不可见或留存到期时 404，撤回/失效状态禁读时 403。
+            BizError: 对象或文件不存在/不可见时 404；撤回、失效或招聘删除后发布者禁读为 403，本人仍可下载保留文件。
         """
         download = download_resume(request.user, application_id)
         try:
