@@ -8,11 +8,12 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import pwd
 import re
+import shutil
 import subprocess as sp
 import time
 import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 
 ROOT = Path('/srv/jimeet-staging')
@@ -63,34 +64,35 @@ base_env={**os.environ,'PATH':NODE+':/usr/local/sbin:/usr/local/bin:/usr/sbin:/u
 if args.archive:
     sha=args.sha
     archive=Path(args.archive)
+    strip_components=0
 else:
-    repo=ROOT/'repository'
-    if not repo.exists():
-        repo.mkdir()
-        account=pwd.getpwnam(USER)
-        os.chown(repo,account.pw_uid,account.pw_gid)
-        app_run(['git','clone','--bare','https://github.com/'+REPO+'.git',str(repo)],ROOT,base_env)
-    probe=sp.run(['runuser','-u',USER,'--','git','-C',str(repo),'ls-remote','--exit-code',
-                  'origin','refs/heads/staging'],capture_output=True,text=True,env=base_env,timeout=45)
-    if probe.returncode==2:
+    # GitHub's Git endpoint can be unreachable while its official API and
+    # codeload service remain available. Pin both CI and the archive to one SHA.
+    try:
+        sha=api('/git/ref/heads/staging')['object']['sha']
+    except urllib.error.HTTPError as error:
+        if error.code!=404: raise
         print('Waiting for repository owner to publish the staging branch'); raise SystemExit(0)
-    probe.check_returncode()
-    app_run(['git','fetch','origin','+refs/heads/staging:refs/heads/staging'],repo,base_env)
-    sha=run(['runuser','-u',USER,'--','git','-C',str(repo),'rev-parse','refs/heads/staging'],
-            capture_output=True,text=True,env=base_env).stdout.strip()
+    if not re.fullmatch('[0-9a-f]{40}',sha): raise SystemExit('Expected exact commit SHA')
     if (ROOT/'deployed-sha').exists() and (ROOT/'deployed-sha').read_text().strip()==sha:
         print('Already deployed '+sha); raise SystemExit(0)
     runs=api('/actions/workflows/staging.yml/runs?branch=staging&event=push&per_page=20')['workflow_runs']
     match=next((r for r in runs if r['head_sha']==sha and r['head_repository']['full_name']==REPO),None)
     if not match or match['status']!='completed' or match['conclusion']!='success':
         print('Waiting for successful Staging checks for '+sha); raise SystemExit(0)
-    archive=ROOT/'candidate.tar'
-    with archive.open('wb') as output:
-        run(['runuser','-u',USER,'--','git','-C',str(repo),'archive',sha],stdout=output,env=base_env)
+    archive=ROOT/'candidate.tar.gz'
+    partial=ROOT/'candidate.tar.gz.part'
+    request=urllib.request.Request('https://codeload.github.com/'+REPO+'/tar.gz/'+sha,
+                                   headers={'User-Agent':'JiMeet-staging-deployer'})
+    with urllib.request.urlopen(request,timeout=90) as response, partial.open('wb') as output:
+        shutil.copyfileobj(response,output)
+    partial.replace(archive)
+    strip_components=1  # GitHub archive wraps files in a single repository directory.
 if not sha or not re.fullmatch('[0-9a-f]{40}',sha): raise SystemExit('Expected exact commit SHA')
 release=ROOT/'releases'/(sha[:12]+'-'+str(int(time.time())))
 release.mkdir()
-run(['tar','-xf',str(archive),'-C',str(release),'--no-same-owner'])
+run(['tar','-xf',str(archive),'-C',str(release),'--no-same-owner',
+     '--strip-components='+str(strip_components)])
 run(['chown','-R',USER+':'+USER,str(release)])
 venv=release/'.venv'
 app_run(['/opt/python/3.12.15/bin/python3.12','-m','venv',str(venv)],release,base_env)
@@ -112,6 +114,9 @@ for line in (CONF/'app.env').read_text().splitlines():
 if env['DB_NAME']!='jimeet_staging' or env['DB_USER']!='jimeet_staging':
     raise SystemExit('Refusing non-staging database')
 app_run([python,'manage.py','check'],release/'backend',env)
+if not args.archive and api('/git/ref/heads/staging')['object']['sha']!=sha:
+    print('Staging changed during validation; leaving the active release unchanged')
+    raise SystemExit(0)
 version={'commit':sha,'deployed_at':datetime.now(timezone.utc).isoformat(),'branch':'staging','repository':REPO}
 (release/'dist/version.json').write_text(json.dumps(version))
 old=(ROOT/'current').resolve() if (ROOT/'current').is_symlink() else None

@@ -46,8 +46,11 @@ Production and local development keep their original 401 contract.
    `jimeet-staging.service`. Failed builds/tests never switch the active version.
 5. Refresh the browser after deployment. `/version.json` records the deployed SHA.
 
-The public repository can be fetched without storing root SSH keys or GitHub tokens
-in Actions. If the repository becomes private, configure a scoped read credential.
+The controller reads the public branch SHA through GitHub's official API and
+downloads that immutable commit from `codeload.github.com`, without depending on
+the Git transport endpoint. It verifies the matching successful CI run and checks
+the branch again before switching releases. No root SSH keys or GitHub tokens are
+stored in Actions. If the repository becomes private, configure a scoped read credential.
 Allow several minutes for CI, polling and deployment; GitHub API/network failures
 leave the existing site active and are retried at the next timer run.
 
