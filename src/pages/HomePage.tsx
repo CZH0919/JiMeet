@@ -1,12 +1,14 @@
-import { FileText, Megaphone, PenLine } from 'lucide-react';
+import { FileText, Megaphone, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { repo } from '@/data';
 import { useAsync } from '@/features/useAsync';
 import { useAuth } from '@/features/useAuth';
+import { usePendingSubmissionCount } from '@/features/useSubmissionReview';
 import { formatDateTime } from '@/domain/format';
 import { TIME_KIND_LABEL } from '@/domain/labels';
 import { Button } from '@/components/ui/Button';
+import { PublishAnnouncementButton } from '@/components/announcement/PublishAnnouncementButton';
 import { EmptyState, ErrorState, PageLoader } from '@/components/ui/Feedback';
 import { Pagination } from '@/components/ui/Pagination';
 
@@ -14,11 +16,13 @@ const PAGE_SIZE = 6;
 
 /**
  * 首页 = 通知公告。
- * 公告与「招聘」不同类：由管理员发布竞赛/活动信息，按发布时间倒序展示（UI 稿首页）。
+ * 公告与「招聘」不同类：管理员可直接发布，普通用户投稿经审核后发布，
+ * 按发布时间倒序展示。首页提供发布公告入口；管理员另有带待审红点的审核工作台入口。
  */
 export function HomePage() {
   const { user, ready } = useAuth();
   const [page, setPage] = useState(1);
+  const pending = usePendingSubmissionCount();
   const { data, loading, error, reload } = useAsync(
     () => (user ? repo.announcements.list({ page, pageSize: PAGE_SIZE }) : Promise.resolve(null)),
     [page, user?.id],
@@ -32,15 +36,31 @@ export function HomePage() {
             <h1 className="text-[26px] font-bold leading-tight tracking-tight text-ink sm:text-[30px]">
               通知公告
             </h1>
-            <p className="mt-2 text-sm text-ink2">按发布时间由近到远排序，最新通知优先展示</p>
+            <p className="mt-2 text-sm text-ink2">校内竞赛与活动公告</p>
           </div>
-          {user?.isAdmin && (
-            <Link to="/announcements/new">
-              <Button size="sm" className="whitespace-nowrap">
-                <PenLine size={15} /> 发布公告
-              </Button>
-            </Link>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {user && (
+              <Link
+                to="/me?tab=submissions"
+                className="whitespace-nowrap text-xs text-ink2 transition-colors hover:text-primary"
+              >
+                我的投稿
+              </Link>
+            )}
+            {user?.isAdmin && (
+              <Link to="/admin?tab=review">
+                <Button size="sm" variant="secondary" className="relative whitespace-nowrap">
+                  <ShieldCheck size={15} /> 公告审核工作台
+                  {pending.count > 0 && (
+                    <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-white">
+                      {pending.count > 99 ? '99+' : pending.count}
+                    </span>
+                  )}
+                </Button>
+              </Link>
+            )}
+            <PublishAnnouncementButton className="whitespace-nowrap" />
+          </div>
         </div>
 
         <div className="mt-6 border-t border-line" />
@@ -50,8 +70,8 @@ export function HomePage() {
         ) : !user ? (
           <EmptyState
             icon={<Megaphone className="h-7 w-7" />}
-            title="登录后查看竞赛与活动公告"
-            description="公告由管理员发布，登录后可查看详情。"
+            title="登录后查看公告"
+            description="公告由管理员发布或经审核后公开。"
             action={
               <Link to="/login">
                 <Button size="sm">去登录</Button>
@@ -66,7 +86,7 @@ export function HomePage() {
           <EmptyState
             icon={<Megaphone className="h-7 w-7" />}
             title="暂无公告"
-            description="发布公告后会显示在这里。"
+            description="发布后将展示在首页。"
           />
         ) : (
           <>

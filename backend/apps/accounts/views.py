@@ -1,5 +1,6 @@
 """账号与开发会话的 HTTP 入口，完整请求与字段契约见 backend/design_file/api.md。"""
 from collections.abc import Mapping
+from ipaddress import ip_address
 
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
@@ -7,22 +8,28 @@ from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework.authentication import SessionAuthentication
-from rest_framework.exceptions import ParseError, ValidationError
+from rest_framework.exceptions import ParseError, UnsupportedMediaType, ValidationError
+from rest_framework.parsers import JSONParser
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts import ratelimit
+from apps.accounts import ratelimit, verification
+from apps.accounts.cancellation import cancel_account
 from apps.accounts.serializers import (
+    CancelAccountSerializer,
     DevLoginSerializer,
     LoginSerializer,
     ProfileUpdateSerializer,
     RegisterSerializer,
+    RegistrationEmailSerializer,
+    VerifyRegistrationCodeSerializer,
     profile_data,
 )
 from apps.accounts.services import (
     PASSWORD_BACKEND,
     give_privacy_consent,
+    login_with_code,
     login_with_password,
     register_with_password,
     update_profile,
@@ -41,9 +48,16 @@ def _client_ip(request) -> str:
         request: DRF 请求。
 
     Returns:
-        str: REMOTE_ADDR；缺失时为空字符串（对应键不计数）。
+        str: 直连时取对端地址；受信任的 Unix 套接字取代理覆写的客户端地址。
     """
-    return (request._request.META.get("REMOTE_ADDR") or "").strip()
+    peer = (request.META.get("REMOTE_ADDR") or "").strip()
+    if peer or not getattr(settings, "TRUST_HTTPS_PROXY", False):
+        return peer
+    try:
+        return str(ip_address(request.META.get("HTTP_X_REAL_IP", "")))
+    except ValueError:
+        # 来源缺失时共用一个限流键。
+        return "127.0.0.1"
 
 
 def _validate_auth_payload(request, serializer_class, *, kind: str) -> dict:
@@ -98,18 +112,70 @@ class CsrfView(APIView):
         return ok({"csrf_token": get_token(request._request)})
 
 
-class RegisterView(APIView):
-    """邮箱密码注册公开入口；匿名请求强制 CSRF。"""
+class EmailAuthAPIView(APIView):
+    """公开邮箱认证接口的 JSON、匿名 CSRF 校验及响应缓存策略。"""
 
     authentication_classes = []
     permission_classes = [AllowAny]
+    parser_classes = [JSONParser]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        SessionAuthentication().enforce_csrf(request._request)
+        if request.method == "POST" and self.get_content_negotiator().select_parser(request, request.parsers) is None:
+            raise UnsupportedMediaType(request._request.content_type)
+
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+
+class RegistrationCodeView(EmailAuthAPIView):
+    """公开发码入口，受理响应不区分邮箱是否已注册。"""
+
+    def post(self, request):
+        """接收 email，返回验证码有效秒数及重发冷却秒数。超限返回 429，投递失败返回 503。"""
+        serializer = RegistrationEmailSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        verification.send_registration_code(
+            email=serializer.validated_data["email"], ip=_client_ip(request), session=request._request.session,
+        )
+        return ok({
+            "expires_in": int(verification.CODE_TTL.total_seconds()),
+            "resend_after": int(verification.RESEND_INTERVAL.total_seconds()),
+        })
+
+
+class VerifyRegistrationCodeView(EmailAuthAPIView):
+    """验证原会话的注册验证码。新邮箱取得一次建号资格，已有账号仅返回登录提示。"""
+
+    def post(self, request):
+        """接收 email 和六位字符串 code，返回资格有效秒数及是否已注册。
+
+        无效或失效的验证码返回 400；验码成功且邮箱已注册时 `account_exists`
+        为 true、`expires_in` 为 0，提示“已注册，请登录”，不建号、不自动登录。
+        """
+        serializer = VerifyRegistrationCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        account_exists = verification.verify_registration_code(
+            **serializer.validated_data, session_key=verification.registration_session_key(request._request.session),
+        )
+        return ok({
+            "expires_in": 0 if account_exists else int(verification.GRANT_TTL.total_seconds()),
+            "account_exists": account_exists,
+        })
+
+
+class RegisterView(EmailAuthAPIView):
+    """持已核验的会话注册普通账号并建立登录态。"""
 
     def post(self, request):
         """POST /api/v1/auth/register：注册普通账号并建立会话。
 
         Args:
-            request: JSON 必填 email、password、name，可选 nickname、role；
-                匿名请求必须提供匹配的 CSRF Cookie 与令牌。
+            request: JSON 必填 email、password、password_confirm、name、role，可选 nickname；
+                须携带已核验该邮箱的会话和匹配的 CSRF 令牌。
 
         Returns:
             Response: HTTP 201，data 为本人资料；建立 Session 并轮换 CSRF 令牌，
@@ -121,29 +187,47 @@ class RegisterView(APIView):
             ValidationFailed: 邮箱冲突或密码不合规，返回 400。
             BizError: 失败限流，返回 429 RATE_LIMITED。
         """
-        SessionAuthentication().enforce_csrf(request._request)
         data = _validate_auth_payload(request, RegisterSerializer, kind=ratelimit.KIND_REGISTER)
-        user = register_with_password(ip=_client_ip(request), **data)
+        user = register_with_password(
+            session_key=verification.registration_session_key(request._request.session), ip=_client_ip(request), **data,
+        )
         login(request._request, user, backend=PASSWORD_BACKEND)
-        response = created(profile_data(user))
-        response["Cache-Control"] = "private, no-store"
-        return response
+        return created(profile_data(user))
 
 
-class LoginView(APIView):
-    """邮箱密码登录公开入口；匿名请求强制 CSRF。"""
-
-    authentication_classes = []
-    permission_classes = [AllowAny]
+class LoginSendCodeView(EmailAuthAPIView):
+    """公开登录发码入口，受理响应不区分邮箱是否已注册。"""
 
     def post(self, request):
-        """POST /api/v1/auth/login：凭邮箱密码建立会话。
+        """POST /api/v1/auth/login/send-code：投递登录验证码。
 
-        不存在邮箱、错误或不可用密码统一 401，不泄露账号是否存在；
-        凭据正确但账号停用返回 403。
+        验证码绑定用途、邮箱和会话，5 分钟有效；与注册验证码共享同邮箱
+        60 秒重发间隔及发送额度。超限返回 429，投递失败返回 503。
+        """
+        serializer = RegistrationEmailSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        verification.send_login_code(
+            email=serializer.validated_data["email"], ip=_client_ip(request), session=request._request.session,
+        )
+        return ok({
+            "expires_in": int(verification.CODE_TTL.total_seconds()),
+            "resend_after": int(verification.RESEND_INTERVAL.total_seconds()),
+        })
+
+
+class LoginView(EmailAuthAPIView):
+    """邮箱登录公开入口，密码或验证码二选一，匿名请求强制校验 CSRF。"""
+
+    def post(self, request):
+        """POST /api/v1/auth/login：凭邮箱加密码或邮箱加验证码建立会话。
+
+        密码登录：不存在邮箱、错误或不可用密码统一 401；凭据正确但停用 403。
+        验证码登录：仅建立已注册、启用账号的会话；验证码错误、过期或串用 400
+        并沿用错码限制，成功后一次性消费。SMTP 故障不影响密码登录及已有会话。
 
         Args:
-            request: JSON 必填 email、password；匿名请求也须通过 CSRF 校验。
+            request: JSON 必填 email，password 与 code 恰好提供一种；匿名请求也须
+                通过 CSRF 校验。
 
         Returns:
             Response: HTTP 200，data 为本人资料；建立 Session 并轮换 CSRF 令牌，
@@ -151,17 +235,22 @@ class LoginView(APIView):
 
         Raises:
             PermissionDenied: CSRF 校验失败，返回 403。
-            ValidationError: 输入字段不合法，返回 400。
+            ValidationError: 字段不合法或两种凭据未二选一，返回 400。
+            ValidationFailed: 验证码错误、过期或串用，返回 400。
             BizError: 凭据不合法 401 AUTH_FAILED；失败限流 429 RATE_LIMITED。
             Forbidden: 账号已停用，返回 403。
         """
-        SessionAuthentication().enforce_csrf(request._request)
         data = _validate_auth_payload(request, LoginSerializer, kind=ratelimit.KIND_LOGIN)
-        user = login_with_password(ip=_client_ip(request), **data)
-        login(request._request, user)
-        response = ok(profile_data(user))
-        response["Cache-Control"] = "private, no-store"
-        return response
+        session_key = verification.registration_session_key(request._request.session)
+        if "code" in data:
+            user = login_with_code(
+                email=data["email"], code=data["code"], session_key=session_key, ip=_client_ip(request),
+            )
+            login(request._request, user, backend=PASSWORD_BACKEND)
+        else:
+            user = login_with_password(email=data["email"], password=data["password"], ip=_client_ip(request))
+            login(request._request, user)
+        return ok(profile_data(user))
 
 
 class DevLoginView(APIView):
@@ -251,6 +340,24 @@ class MeView(PrivateAPIView):
         serializer.is_valid(raise_exception=True)
         user = update_profile(request.user, **serializer.validated_data)
         return ok(profile_data(user))
+
+    def delete(self, request):
+        """注销登录者本人账号，并终止当前会话。
+
+        Args:
+            request: 须通过会话及 CSRF 校验，JSON 中 confirm 必须为布尔值 true。
+
+        Returns:
+            Response: 200，data 为 null。其他设备随后访问时须重新认证。
+
+        Raises:
+            ValidationError: 确认字段缺失、值无效或传入了额外字段。
+        """
+        serializer = CancelAccountSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        cancel_account(request.user)
+        logout(request._request)
+        return ok()
 
 
 class PrivacyConsentView(APIView):

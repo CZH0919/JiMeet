@@ -1,0 +1,7 @@
+SHELL=/bin/sh
+PATH=/usr/local/bin:/usr/bin:/bin
+* * * * * /bin/sh /opt/jimeet/backend/deploy/run_job.sh run_sync_recruitments
+8 * * * * /bin/sh /opt/jimeet/backend/deploy/run_job.sh run_purge_applications
+18 * * * * /bin/sh /opt/jimeet/backend/deploy/run_job.sh run_purge_chat_messages
+*/10 * * * * /bin/sh /opt/jimeet/backend/deploy/run_job.sh check_registration_mail
+35 2 * * * /bin/sh /opt/jimeet/backend/deploy/run_job.sh backup

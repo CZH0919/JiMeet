@@ -3,7 +3,7 @@
 from django.conf import settings
 from rest_framework import serializers
 
-from apps.core.choices import RecruitmentStatus, RecruitmentType, Role
+from apps.core.choices import PUBLISHABLE_RECRUITMENT_TYPES, RecruitmentStatus, RecruitmentType, Role
 from apps.core.serializers import (
     AwareDateTimeField,
     QueryIntegerField,
@@ -21,14 +21,19 @@ class RecruitmentWriteSerializer(StrictSerializer):
     """POST 必填业务字段；PATCH 只接受提供的可写字段，禁止空修改。"""
 
     title = StrictCharField(max_length=100)
-    type = serializers.ChoiceField(choices=RecruitmentType.choices)
+    type = serializers.ChoiceField(choices=PUBLISHABLE_RECRUITMENT_TYPES)
     description = StrictCharField(max_length=5000)
+    note = StrictCharField(max_length=1000, required=False, allow_null=True, allow_blank=True)
     tag_ids = serializers.ListField(
         child=StrictIntegerField(min_value=1, max_value=MAX_RESOURCE_ID), allow_empty=False,
     )
     min_headcount = StrictIntegerField(min_value=1, allow_null=True, required=False, default=None)
     max_headcount = StrictIntegerField(min_value=1, max_value=settings.MAX_HEADCOUNT_LIMIT)
     deadline = AwareDateTimeField()
+
+    def validate_note(self, value):
+        """将空白补充说明归一为 null。"""
+        return value or None
 
     def validate_tag_ids(self, value):
         """拒绝重复标签主键。
@@ -89,9 +94,9 @@ class RecruitmentQuerySerializer(StrictQuerySerializer):
 class PublicUserSerializer(serializers.Serializer):
     """招募中只嵌入公开身份，不暴露姓名、邮箱或数据库用户主键。"""
 
-    uid = serializers.CharField(read_only=True)
+    uid = serializers.CharField(source="public_uid", read_only=True, allow_null=True)
     nickname = serializers.CharField(read_only=True)
-    role = serializers.ChoiceField(choices=Role.choices, read_only=True)
+    role = serializers.ChoiceField(source="public_role", choices=Role.choices, read_only=True, allow_null=True)
 
 
 class TagSerializer(serializers.Serializer):
@@ -102,6 +107,7 @@ class TagSerializer(serializers.Serializer):
 class RecruitmentSummarySerializer(serializers.ModelSerializer):
     """仅序列化已计算有效状态的只读招募快照。"""
 
+    type = serializers.CharField(source="public_type", read_only=True)
     publisher = PublicUserSerializer(read_only=True)
     tags = TagSerializer(many=True, read_only=True)
     is_deleted = serializers.SerializerMethodField()
@@ -136,7 +142,7 @@ class RecruitmentDetailSerializer(RecruitmentSummarySerializer):
 
     class Meta(RecruitmentSummarySerializer.Meta):
         fields = RecruitmentSummarySerializer.Meta.fields + (
-            "description", "closed_at", "full_at", "close_reason",
+            "description", "note", "closed_at", "full_at", "close_reason",
             "my_application", "permissions", "application_counts",
         )
         read_only_fields = fields

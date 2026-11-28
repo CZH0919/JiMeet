@@ -11,6 +11,7 @@ from apps.applications.policies import resolve_application_access
 from apps.core.choices import ApplicationStatus, PublisherMark, RecruitmentStatus
 from apps.core.errors import NotFound, NotFoundAsDenied
 from apps.recruitments import rules
+from apps.recruitments.lifecycle import details_expired, expired_recruitments
 from apps.recruitments.models import Recruitment
 from apps.recruitments.selectors import project_recruitment
 
@@ -53,6 +54,8 @@ def require_application_access(user, application, now):
     Raises:
         NotFoundAsDenied: 无申请人/发布者关系，映射为 404 并保留拒绝审计目标。
     """
+    if details_expired(application.recruitment, now):
+        raise NotFound("申请不存在")
     access = resolve_application_access(user, application, application.recruitment, now)
     if not access.can_view:
         raise NotFoundAsDenied("申请不存在", audit_target=("application", application.pk))
@@ -92,7 +95,7 @@ def get_publisher_recruitment(user, recruitment_id: int, now):
         now: 时间状态判断时点。
 
     Returns:
-        Recruitment: 已投影的招募；允许已删除招募的受限申请历史，不按固定期限隐藏。
+        Recruitment: 已投影的招募；允许发布者查看留存期内的受限历史。
 
     Raises:
         NotFound: 招募不存在。
@@ -127,7 +130,7 @@ def list_applications(*, filters: dict, now, applicant=None, recruitment=None):
     """
     if (applicant is None) == (recruitment is None):
         raise ValueError("必须且只能提供一个申请查询范围")
-    queryset = Application.objects.select_related("recruitment", "applicant")
+    queryset = Application.objects.select_related("recruitment", "applicant").exclude(expired_recruitments(now, "recruitment__"))
     if applicant is not None:
         queryset = queryset.filter(applicant=applicant)
     else:

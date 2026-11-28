@@ -60,7 +60,7 @@ class RecruitmentApplicationListView(ApplicationAPIView):
             recruitment_id: 路径中的招募主键。
 
         Returns:
-            Response: HTTP 200，data 为 ApplicationSummary 分页；包含已删除招募的受限历史，不按固定期限隐藏。
+            Response: HTTP 200，data 为 ApplicationSummary 分页；包括已删除招聘在留存期内的受限历史。
 
         Raises:
             BizError: 不是发布者或对象不存在时 404；非法分页时 400。
@@ -101,7 +101,7 @@ class MyApplicationListView(ApplicationAPIView):
             request: 已认证请求；可按 status、recruitment_id 筛选，使用 page/page_size 分页。
 
         Returns:
-            Response: HTTP 200，data 为申请摘要分页；包含撤回和失效记录，不按固定期限排除历史。
+            Response: HTTP 200，data 为申请摘要分页；包含留存期内的撤回和失效记录。
 
         Raises:
             ValidationFailed: 分页参数不合法，返回 400。

@@ -1,5 +1,5 @@
 /**
- * 领域模型（对齐 `backend/design_file/api.md` Sprint2 契约）。
+ * 前端页面使用的领域模型。
  * UI 层只认这里定义的字段，后端 snake_case、枚举、可空语义都在 data/http/mappers.ts 收口。
  */
 
@@ -7,7 +7,7 @@ export type UserRole = 'student' | 'teacher';
 
 /** 公共用户：后端只暴露 uid / nickname / role，不含姓名、邮箱 */
 export interface PublicUser {
-  id: string; // 32 位十六进制 uid
+  id: string; // 32 位十六进制 uid；已注销用户为 ''
   name: string; // 展示名（nickname）
   role: UserRole;
 }
@@ -15,7 +15,10 @@ export interface PublicUser {
 /** 本人资料（GET /me） */
 export interface User {
   id: string;
+  /** 展示名（昵称） */
   name: string;
+  /** 姓名：仅本人资料可见，未做学校核验，不作授权依据 */
+  realName?: string;
   role: UserRole;
   isAdmin: boolean;
   email?: string;
@@ -24,7 +27,7 @@ export interface User {
   emailNotifyEnabled: boolean;
 }
 
-/** 招聘类型（后端 competition / activity / internship） */
+/** 招聘类型（后端 competition / activity；internship 仅用于历史记录展示） */
 export type JobType = 'competition' | 'activity' | 'internship';
 
 /** 招聘业务状态：进行中 / 已满员 / 已关闭 */
@@ -56,6 +59,8 @@ export interface Job {
   type: JobType;
   title: string;
   description: string;
+  /** 发布者的招聘补充说明（与申请附带的说明是两回事） */
+  note: string | null;
   tags: Tag[];
   minHeadcount: number | null;
   maxHeadcount: number;
@@ -71,6 +76,8 @@ export interface Job {
   myApplicationStatus?: ApplicationStatus | null;
   /** 详情接口对发布者返回的申请总数 */
   applicationCount: number;
+  /** 详情接口对发布者返回的五种状态计数（仅发布者可见） */
+  applicationCounts?: Partial<Record<ApplicationStatus, number>>;
   permissions?: JobPermissions;
 }
 
@@ -118,25 +125,41 @@ export interface Application {
   canDownloadResume: boolean;
 }
 
+/** 聊天消息：发送方/接收方均为公开 uid；readAt 仅本人视角的对方消息有意义 */
 export interface Message {
   id: string;
   conversationId: string;
   senderId: string;
+  recipientId: string;
   text: string;
   createdAt: string;
+  readAt: string | null;
 }
 
 export interface Conversation {
   id: string;
   peer: PublicUser;
   lastMessage: Pick<Message, 'text' | 'createdAt' | 'senderId'> | null;
+  /** 本人未读的对方消息数 */
+  unreadCount: number;
   updatedAt: string;
+}
+
+/** 对方主页（GET /users/{uid}）：只含公开资料与聊天入口 */
+export interface PeerProfile {
+  uid: string;
+  nickname: string;
+  role: UserRole;
+  canChat: boolean;
+  /** 已有会话编号（可空）；打开主页不会创建会话 */
+  conversationId: string | null;
 }
 
 /** 公告时间类型：报名截止时间 / 活动时间 */
 export type AnnouncementTimeKind = 'deadline' | 'event';
 
 export interface AnnouncementPermissions {
+  /** 公告不可编辑，后端恒为 false */
   canEdit: boolean;
   canDelete: boolean;
   canGovernDelete: boolean;
@@ -158,16 +181,60 @@ export interface Announcement {
   permissions: AnnouncementPermissions;
 }
 
+/** 普通用户投稿状态：待审核 / 已通过 / 已驳回 */
+export type SubmissionStatus = 'pending' | 'approved' | 'rejected';
+
+/** 本人投稿记录（GET /me/announcement-submissions） */
+export interface AnnouncementSubmission {
+  id: string;
+  title: string;
+  content: string;
+  timeKind: AnnouncementTimeKind;
+  eventAt: string;
+  linkUrl: string | null;
+  status: SubmissionStatus;
+  submittedAt: string;
+  reviewedAt: string | null;
+  rejectReason: string | null;
+  announcementId: string | null;
+}
+
+/** 管理员待审池条目（GET /admin/announcement-submissions） */
+export interface PendingSubmission {
+  id: string;
+  title: string;
+  content: string;
+  timeKind: AnnouncementTimeKind;
+  eventAt: string;
+  linkUrl: string | null;
+  submittedAt: string;
+  submitter: PublicUser;
+  claimedBy: PublicUser | null;
+  claimedUntil: string | null;
+  /** 超过 24 小时未处理 */
+  overdue: boolean;
+}
+
+/** 领取成功后需原样带回的审核批次 */
+export interface ClaimedSubmission extends AnnouncementSubmission {
+  claimId: string;
+  claimedUntil: string;
+}
+
 export type NotificationType =
   | 'application_submitted'
   | 'application_accepted'
   | 'application_rejected'
   | 'application_withdrawn'
   | 'application_updated'
+  | 'anonymous_withdrawal'
   | 'recruitment_closed'
   | 'recruitment_updated'
   | 'recruitment_deleted'
   | 'announcement_admin_removed'
+  | 'announcement_removed'
+  | 'announcement_submission_approved'
+  | 'announcement_submission_rejected'
   | 'admin_removed';
 
 export interface Notification {

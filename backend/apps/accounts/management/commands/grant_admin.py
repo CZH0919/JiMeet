@@ -35,7 +35,7 @@ class Command(BaseCommand):
             CommandError: 目标账号或操作者账号不存在。
         """
         with transaction.atomic():
-            user = User.objects.select_for_update().filter(email__iexact=options["email"].strip()).first()
+            user = User.objects.select_for_update().filter(email__iexact=options["email"].strip(), cancelled_at__isnull=True).first()
             if user is None:
                 raise CommandError(f"账号不存在: {options['email']}")
             actor = None
@@ -53,6 +53,6 @@ class Command(BaseCommand):
                 action=actions.ADMIN_GRANT,
                 target_type="user",
                 target_id=user.pk,
-                reason=f"管理命令授予管理员权限（目标 {user.email}）",
+                reason="管理命令授予管理员权限",
             )
         self.stdout.write(self.style.SUCCESS(f"已授予管理员权限: {user.email}"))

@@ -171,9 +171,9 @@ class EventConsistencyTest(TxTestCase):
             (types.APPLICATION_REJECTED, self.applicant.pk, app.pk),
         ])
         self.client.force_authenticate(self.applicant)
-        row = self.client.get("/api/v1/me/applications?status=rejected").data["data"]["items"][0]
-        self.assertEqual(row["id"], app.pk)
-        self.assertFalse(row["permissions"]["can_modify"])
+        rows = self.client.get("/api/v1/me/applications?status=rejected").data["data"]["items"]
+        self.assertEqual(rows, [])
+        self.assertEqual(self.client.get(f"/api/v1/applications/{app.pk}").status_code, 404)
         self.assert_no_email()
 
     def test_late_full_and_concurrent_sync_generate_one_result(self):
@@ -258,7 +258,6 @@ class EventConsistencyTest(TxTestCase):
         author = make_user(is_admin=True)
         announcement = announcements.create_announcement(actor=author, title="竞赛", content="正文",
                                                         time_kind="event", event_at=clock.now())
-        announcements.update_announcement(announcement.pk, actor=author, content="更新正文")
         self.assertFalse(Notification.objects.exists())
         author.is_admin = False
         author.save(update_fields=["is_admin"])
@@ -275,11 +274,19 @@ class EventConsistencyTest(TxTestCase):
         self.assertTrue(row["target_is_deleted"])
         self.assert_no_email()
 
-    def test_own_announcement_deletion_has_no_broadcast(self):
-        announcement = announcements.create_announcement(actor=self.admin, title="竞赛", content="正文",
-                                                        time_kind="event", event_at=clock.now())
+    def test_own_announcement_deletion_notifies_publisher_without_broadcast(self):
+        """删除结果通知发布人与投稿人；本人删除不产生额外广播，不发邮件。"""
+        submitter = make_user()
+        announcement = announcements.create_announcement(
+            actor=self.admin, title="竞赛", content="正文", time_kind="event",
+            event_at=clock.now(), submitted_by=submitter,
+        )
         announcements.soft_delete_announcement(announcement.pk, actor=self.admin)
-        self.assertFalse(Notification.objects.exists())
+        self.assertEqual(
+            set(Notification.objects.filter(announcement=announcement)
+                .values_list("recipient_id", flat=True)),
+            {self.admin.pk, submitter.pk},
+        )
         self.assert_no_email()
 
     def test_failure_after_notification_insert_rolls_back_business_history_and_audit(self):

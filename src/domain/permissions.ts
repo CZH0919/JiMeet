@@ -6,7 +6,8 @@ import type { Announcement, Application, Job, User } from './models';
  */
 export const can = {
   /** 编辑本人发布的招聘 */
-  editJob: (u: User | null, job: Job) => (job.permissions ? job.permissions.canEdit : !!u && u.id === job.publisher.id),
+  editJob: (u: User | null, job: Job) =>
+    job.permissions ? job.permissions.canEdit : !!u && u.id === job.publisher.id,
 
   /** 本人删除招聘（发布者入口，受进行中限制） */
   deleteJob: (u: User | null, job: Job) =>
@@ -28,12 +29,6 @@ export const can = {
     return u.id === app.applicant.id || u.id === jobPublisherId;
   },
 
-  /** 编辑公告：当前管理员且为作者 */
-  editAnnouncement: (u: User | null, a: Announcement) => a.permissions.canEdit ?? !!u?.isAdmin,
-
-  /** 删除公告（本人入口） */
-  deleteAnnouncement: (u: User | null, a: Announcement) => a.permissions.canDelete ?? !!u?.isAdmin,
-
-  /** 治理删除公告 */
-  governDeleteAnnouncement: (a: Announcement) => a.permissions.canGovernDelete,
+  /** 治理删除公告（独立入口，需管理员权限且原因非空） */
+  governDeleteAnnouncement: (announcement: Announcement) => announcement.permissions.canGovernDelete,
 };

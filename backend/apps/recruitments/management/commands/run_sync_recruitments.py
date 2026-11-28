@@ -2,7 +2,7 @@
 import logging
 from datetime import timedelta
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Exists, OuterRef, Q
 
 from apps.applications.models import Application
@@ -30,6 +30,9 @@ class Command(BaseCommand):
 
         Returns:
             None: 输出处理、失败、关闭及自动拒绝数量。
+
+        Raises:
+            CommandError: 扫描完成后仍有处理失败的招聘。
         """
         now = clock.now()
         processing = Application.objects.filter(
@@ -58,3 +61,5 @@ class Command(BaseCommand):
         self.stdout.write(
             f"招聘状态同步完成：处理 {processed} 个，失败 {failed} 个，关闭 {closed} 个，自动拒绝 {rejected} 份申请"
         )
+        if failed:
+            raise CommandError(f"{failed} 个招聘同步失败，可重新执行")

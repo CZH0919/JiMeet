@@ -1,16 +1,23 @@
 import type {
   Announcement,
+  AnnouncementSubmission,
   AnnouncementTimeKind,
   Application,
   ApplicationStatus,
+  ClaimedSubmission,
+  Conversation,
   Job,
   JobStatus,
   JobType,
+  Message,
   Notification,
   NotificationType,
   Page,
+  PeerProfile,
+  PendingSubmission,
   PublicUser,
   ResumeFile,
+  SubmissionStatus,
   Tag,
   User,
   UserRole,
@@ -29,7 +36,7 @@ function mapRole(v: unknown): UserRole {
   return v === 'teacher' ? 'teacher' : 'student';
 }
 
-function mapPublicUser(v: Json | undefined): PublicUser {
+export function mapPublicUser(v: Json | undefined): PublicUser {
   return {
     id: str(v?.uid),
     name: str(v?.nickname ?? v?.name ?? '未知用户'),
@@ -63,6 +70,12 @@ function mapApplicationStatus(v: unknown): ApplicationStatus {
   }
 }
 
+function mapSubmissionStatus(v: unknown): SubmissionStatus {
+  if (v === 'approved') return 'approved';
+  if (v === 'rejected') return 'rejected';
+  return 'pending';
+}
+
 function mapTimeKind(v: unknown): AnnouncementTimeKind {
   return v === 'event' ? 'event' : 'deadline';
 }
@@ -85,6 +98,7 @@ export function mapUser(raw: Json): User {
   return {
     id: str(raw.uid),
     name: str(raw.nickname ?? raw.name),
+    realName: raw.name == null ? undefined : str(raw.name),
     role: mapRole(raw.role),
     isAdmin: raw.is_admin === true,
     email: raw.email == null ? undefined : str(raw.email),
@@ -93,13 +107,14 @@ export function mapUser(raw: Json): User {
   };
 }
 
-/** 列表摘要（无 description / my_application / permissions） */
+/** 列表摘要（无 description / note / my_application / permissions） */
 export function mapRecruitmentSummary(raw: Json): Job {
   return {
     id: str(raw.id),
     type: mapJobType(raw.type),
     title: str(raw.title),
     description: '',
+    note: null,
     tags: mapTags(raw.tags),
     minHeadcount: raw.min_headcount == null ? null : Number(raw.min_headcount),
     maxHeadcount: Number(raw.max_headcount ?? 0),
@@ -114,22 +129,29 @@ export function mapRecruitmentSummary(raw: Json): Job {
   };
 }
 
-/** 详情（含 description / my_application / permissions / application_counts） */
+/** 详情（含 description / note / my_application / permissions / application_counts） */
 export function mapRecruitmentDetail(raw: Json): Job {
   const summary = mapRecruitmentSummary(raw);
   const myApplication = raw.my_application as Json | null | undefined;
   const permissions = raw.permissions as Json | undefined;
   const counts = raw.application_counts as Json | undefined;
   let applicationCount = 0;
+  const applicationCounts: Partial<Record<ApplicationStatus, number>> = {};
   if (counts) {
-    for (const k of Object.keys(counts)) applicationCount += Number(counts[k] ?? 0);
+    for (const [k, v] of Object.entries(counts)) {
+      const n = Number(v ?? 0);
+      applicationCounts[k as ApplicationStatus] = n;
+      applicationCount += n;
+    }
   }
   const blocked = permissions?.apply_blocked_reason ? str(permissions.apply_blocked_reason) : null;
   return {
     ...summary,
     description: str(raw.description),
+    note: raw.note == null || str(raw.note) === '' ? null : str(raw.note),
     myApplicationStatus: myApplication ? mapApplicationStatus(myApplication.status) : null,
     applicationCount,
+    applicationCounts,
     permissions: {
       canApply: permissions?.can_apply === true,
       canEdit: permissions?.can_edit === true,
@@ -193,14 +215,91 @@ export function mapAnnouncement(raw: Json): Announcement {
     createdAt: str(raw.created_at),
     updatedAt: str(raw.updated_at),
     permissions: {
-      canEdit: permissions?.can_edit === true,
+      canEdit: false,
       canDelete: permissions?.can_delete === true,
       canGovernDelete: permissions?.can_govern_delete === true,
     },
   };
 }
 
+export function mapSubmission(raw: Json): AnnouncementSubmission {
+  return {
+    id: str(raw.id),
+    title: str(raw.title),
+    content: str(raw.content),
+    timeKind: mapTimeKind(raw.time_kind),
+    eventAt: str(raw.event_at),
+    linkUrl: raw.link_url == null || raw.link_url === '' ? null : str(raw.link_url),
+    status: mapSubmissionStatus(raw.status),
+    submittedAt: str(raw.submitted_at),
+    reviewedAt: raw.reviewed_at == null ? null : str(raw.reviewed_at),
+    rejectReason: raw.reject_reason == null ? null : str(raw.reject_reason),
+    announcementId: raw.announcement_id == null ? null : str(raw.announcement_id),
+  };
+}
+
+export function mapClaimedSubmission(raw: Json): ClaimedSubmission {
+  return {
+    ...mapSubmission(raw),
+    claimId: str(raw.claim_id),
+    claimedUntil: str(raw.claimed_until),
+  };
+}
+
+export function mapPendingSubmission(raw: Json): PendingSubmission {
+  return {
+    id: str(raw.id),
+    title: str(raw.title),
+    content: str(raw.content),
+    timeKind: mapTimeKind(raw.time_kind),
+    eventAt: str(raw.event_at),
+    linkUrl: raw.link_url == null || raw.link_url === '' ? null : str(raw.link_url),
+    submittedAt: str(raw.submitted_at),
+    submitter: mapPublicUser(raw.submitter as Json | undefined),
+    claimedBy: raw.claimed_by ? mapPublicUser(raw.claimed_by as Json) : null,
+    claimedUntil: raw.claimed_until == null ? null : str(raw.claimed_until),
+    overdue: raw.overdue === true,
+  };
+}
+
+export function mapMessage(raw: Json): Message {
+  return {
+    id: str(raw.id),
+    conversationId: str(raw.conversation_id),
+    senderId: str(raw.sender_uid),
+    recipientId: str(raw.recipient_uid),
+    text: str(raw.content),
+    createdAt: str(raw.created_at),
+    readAt: raw.read_at == null ? null : str(raw.read_at),
+  };
+}
+
+export function mapConversation(raw: Json): Conversation {
+  const last = raw.last_message as Json | null | undefined;
+  return {
+    id: str(raw.id),
+    peer: mapPublicUser(raw.peer as Json | undefined),
+    lastMessage: last
+      ? { text: str(last.content), createdAt: str(last.created_at), senderId: str(last.sender_uid) }
+      : null,
+    unreadCount: Number(raw.unread_count ?? 0),
+    updatedAt: str(raw.updated_at),
+  };
+}
+
+export function mapPeerProfile(raw: Json): PeerProfile {
+  const chat = raw.chat as Json | undefined;
+  return {
+    uid: str(raw.uid),
+    nickname: str(raw.nickname),
+    role: mapRole(raw.role),
+    canChat: chat?.can_chat === true,
+    conversationId: chat?.conversation_id == null ? null : str(chat.conversation_id),
+  };
+}
+
 const NOTIFICATION_TYPES: Record<string, NotificationType> = {
+  anonymous_withdrawal: 'anonymous_withdrawal',
   application_submitted: 'application_submitted',
   application_accepted: 'application_accepted',
   application_rejected: 'application_rejected',
@@ -210,6 +309,9 @@ const NOTIFICATION_TYPES: Record<string, NotificationType> = {
   recruitment_updated: 'recruitment_updated',
   recruitment_deleted: 'recruitment_deleted',
   announcement_admin_removed: 'announcement_admin_removed',
+  announcement_removed: 'announcement_removed',
+  announcement_submission_approved: 'announcement_submission_approved',
+  announcement_submission_rejected: 'announcement_submission_rejected',
   admin_removed: 'admin_removed',
 };
 
@@ -245,6 +347,26 @@ export function mapApplicationPage(data: Json): Page<Application> {
 
 export function mapAnnouncementPage(data: Json): Page<Announcement> {
   const items = Array.isArray(data.items) ? data.items.map((r) => mapAnnouncement(r as Json)) : [];
+  return mapPage(items, data);
+}
+
+export function mapSubmissionPage(data: Json): Page<AnnouncementSubmission> {
+  const items = Array.isArray(data.items) ? data.items.map((r) => mapSubmission(r as Json)) : [];
+  return mapPage(items, data);
+}
+
+export function mapPendingSubmissionPage(data: Json): Page<PendingSubmission> {
+  const items = Array.isArray(data.items) ? data.items.map((r) => mapPendingSubmission(r as Json)) : [];
+  return mapPage(items, data);
+}
+
+export function mapConversationPage(data: Json): Page<Conversation> {
+  const items = Array.isArray(data.items) ? data.items.map((r) => mapConversation(r as Json)) : [];
+  return mapPage(items, data);
+}
+
+export function mapMessagePage(data: Json): Page<Message> {
+  const items = Array.isArray(data.items) ? data.items.map((r) => mapMessage(r as Json)) : [];
   return mapPage(items, data);
 }
 

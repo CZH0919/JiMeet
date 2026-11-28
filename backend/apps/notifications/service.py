@@ -36,25 +36,35 @@ def notify(
     assert_in_atomic()
     if type not in types.ALL:
         raise ValueError("未知通知类型")
+    expected_recipients = None
     if type in types.ANNOUNCEMENT_EVENTS:
         if announcement is None or recruitment is not None or application is not None:
             raise ValueError("公告通知必须只关联公告")
-        expected_recipient = announcement.author_id
+        if type in types.ANNOUNCEMENT_DELETION_EVENTS:
+            # 删除结果通知发布人与投稿人，两者相同由业务服务只发一次。
+            expected_recipients = {announcement.author_id, announcement.submitted_by_id} - {None}
+        else:
+            # 投稿审核通过通知投稿人。
+            expected_recipients = {announcement.submitted_by_id}
     elif announcement is not None:
         raise ValueError("该通知不能关联公告")
+    elif type == types.ANNOUNCEMENT_SUBMISSION_REJECTED:
+        # 驳回通知不带目标关联；接收人由业务服务按投稿归属提供。
+        if recruitment is not None or application is not None:
+            raise ValueError("该通知不能关联招聘或申请")
     elif type in types.REQUIRES_APPLICATION:
         if application is None or recruitment is None:
             raise ValueError("该通知必须同时关联申请与招聘")
         if application.recruitment_id != recruitment.pk:
             raise ValueError("申请与招聘不匹配")
-        expected_recipient = (
+        expected_recipients = {
             recruitment.publisher_id if type in types.PUBLISHER_APPLICATION_EVENTS else application.applicant_id
-        )
+        }
     else:
         if recruitment is None or application is not None:
             raise ValueError("该通知必须只关联招聘")
-        expected_recipient = recruitment.publisher_id
-    if recipient.pk != expected_recipient:
+        expected_recipients = {recruitment.publisher_id}
+    if expected_recipients is not None and recipient.pk not in expected_recipients:
         raise ValueError("通知接收人与业务事件不匹配")
     values = dict(context or {})
     if type in {types.ADMIN_REMOVED, types.ANNOUNCEMENT_ADMIN_REMOVED}:

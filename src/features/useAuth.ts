@@ -28,7 +28,7 @@ export function useAuth() {
     }
   }, [ready, setUser, setReady]);
 
-  // 任意请求返回 401 时清空登录态（会话过期、后端重启等）
+  // 任意请求返回 401 时清空登录态（会话过期、后端重启、账号注销等）
   useEffect(() => {
     const onUnauthenticated = () => setUser(null);
     window.addEventListener('jiyu:unauthenticated', onUnauthenticated);
@@ -55,16 +55,6 @@ export function useAuth() {
     [setUser],
   );
 
-  const devLogin = useCallback(
-    async (realId: string) => {
-      const u = await repo.auth.devLogin(realId);
-      setUser(u);
-      toast.success(`开发身份：${u.name}`);
-      return u;
-    },
-    [setUser],
-  );
-
   const logout = useCallback(async () => {
     try {
       await repo.auth.logout();
@@ -73,6 +63,12 @@ export function useAuth() {
     }
     setUser(null);
     toast.info('已退出登录');
+  }, [setUser]);
+
+  const cancelAccount = useCallback(async () => {
+    await repo.auth.cancelAccount();
+    setUser(null);
+    toast.success('账号已注销');
   }, [setUser]);
 
   const updateNickname = useCallback(
@@ -92,5 +88,14 @@ export function useAuth() {
     return u;
   }, [setUser]);
 
-  return { user, ready, login, register, devLogin, logout, updateNickname, consentPrivacy };
+  return {
+    user,
+    ready,
+    login,
+    register,
+    logout,
+    cancelAccount,
+    updateNickname,
+    consentPrivacy,
+  };
 }

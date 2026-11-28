@@ -1,10 +1,13 @@
 import { RotateCcw, Search } from 'lucide-react';
+import { useMemo } from 'react';
 import { clsx } from 'clsx';
-import type { JobStatus, JobType } from '@/domain/models';
+import type { ApplicationStatus, JobStatus, JobType } from '@/domain/models';
 import { repo } from '@/data';
+import { fetchAllPages } from '@/data/fetchAll';
 import { useAsync } from '@/features/useAsync';
 import { useJobList } from '@/features/useJobs';
 import { JOB_STATUS_LABEL } from '@/domain/labels';
+import { useSession } from '@/stores/session';
 import { JobCard } from '@/components/job/JobCard';
 import { EmptyState, ErrorState, PageLoader } from '@/components/ui/Feedback';
 import { Pagination } from '@/components/ui/Pagination';
@@ -13,7 +16,6 @@ const TYPE_OPTIONS: { key: 'all' | JobType; label: string }[] = [
   { key: 'all', label: '全部' },
   { key: 'competition', label: '竞赛组队' },
   { key: 'activity', label: '活动招聘' },
-  { key: 'internship', label: '实验室实习' },
 ];
 
 const STATUS_OPTIONS: { key: 'all' | JobStatus; label: string }[] = [
@@ -43,6 +45,24 @@ export function JobsPage() {
   } = useJobList('all', 9);
 
   const tags = useAsync(() => repo.jobs.listTags(), []);
+  const user = useSession((s) => s.user);
+
+  // 列表接口不返回 my_application：用本人的申请记录补上「已申请」标注
+  const myApplications = useAsync(
+    () =>
+      user
+        ? fetchAllPages((p, s) => repo.applications.listMine({ page: p, pageSize: s }))
+        : Promise.resolve([]),
+    [user?.id],
+  );
+  const applicationStatusByJob = useMemo(() => {
+    const map = new Map<string, ApplicationStatus>();
+    for (const app of myApplications.data ?? []) {
+      // 后端按提交时间倒序，同一招聘保留最近一次记录
+      if (!map.has(app.jobId)) map.set(app.jobId, app.status);
+    }
+    return map;
+  }, [myApplications.data]);
 
   const reset = () => {
     setType('all');
@@ -57,7 +77,7 @@ export function JobsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-[26px] font-bold tracking-tight text-ink">招聘</h1>
-          <p className="mt-2 text-sm text-ink2">竞赛组队、校内活动与实验室实习</p>
+          <p className="mt-2 text-sm text-ink2">竞赛组队与校内活动招聘</p>
         </div>
         <div className="relative w-full sm:w-80">
           <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted" />
@@ -151,7 +171,10 @@ export function JobsPage() {
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {data.items.map((job) => (
-                <JobCard key={job.id} job={job} />
+                <JobCard
+                  key={job.id}
+                  job={{ ...job, myApplicationStatus: applicationStatusByJob.get(job.id) ?? null }}
+                />
               ))}
             </div>
             <Pagination page={page} pageSize={pageSize} total={data.total} onChange={setPage} />

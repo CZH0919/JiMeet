@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 
 from django.conf import settings
 
-from apps.core.choices import RecruitmentStatus
+from apps.core.choices import PUBLISHABLE_RECRUITMENT_TYPES, ApplicationStatus, RecruitmentStatus
 from apps.core.errors import ValidationFailed
 
 
@@ -20,6 +20,12 @@ def add_one_year(dt: datetime) -> datetime:
         return dt.replace(year=dt.year + 1)
     except ValueError:
         return dt.replace(year=dt.year + 1, day=28)
+
+
+def validate_type(value: str) -> None:
+    """校验新增或显式变更的招聘类型。历史存储值由读取层映射。"""
+    if value not in PUBLISHABLE_RECRUITMENT_TYPES:
+        raise ValidationFailed(details={"type": "须选择竞赛组队或校内活动"})
 
 
 def validate_deadline(deadline: datetime, now: datetime) -> None:
@@ -66,6 +72,22 @@ def seven_day_deadline(r) -> datetime | None:
     return r.closed_at + timedelta(days=7) if r.closed_at is not None else None
 
 
+def effective_application_status(status, recruitment, moment):
+    """计算查询或匿名汇总时的状态，涵盖定时任务滞后的截止、满员和删除。"""
+    if recruitment.deleted_at is not None:
+        if status in (ApplicationStatus.PROCESSING, ApplicationStatus.ACCEPTED):
+            return ApplicationStatus.INVALID
+        return status
+    if status != ApplicationStatus.PROCESSING:
+        return status
+    end = seven_day_deadline(recruitment)
+    if end is None and recruitment.status == RecruitmentStatus.OPEN:
+        end = recruitment.deadline + timedelta(days=7)
+    if recruitment.status == RecruitmentStatus.FULL or (end is not None and moment >= end):
+        return ApplicationStatus.REJECTED
+    return status
+
+
 def is_apply_open(r, now: datetime) -> bool:
     """判断招募是否仍处于投递窗口。
 
@@ -76,7 +98,8 @@ def is_apply_open(r, now: datetime) -> bool:
     Returns:
         bool: 未删除、状态 open 且 now 严格早于 deadline 时为 True。
     """
-    return r.deleted_at is None and r.status == RecruitmentStatus.OPEN and now < r.deadline
+    return (getattr(r, "applications_anonymized_at", None) is None and r.deleted_at is None
+            and r.status == RecruitmentStatus.OPEN and now < r.deadline)
 
 
 def is_processable(r, now: datetime) -> bool:

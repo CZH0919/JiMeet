@@ -13,7 +13,7 @@ from apps.core.serializers import (
     StrictQuerySerializer,
     StrictSerializer,
 )
-from apps.announcements.models import Announcement
+from apps.announcements.models import Announcement, AnnouncementSubmission
 
 
 def _validate_link_url(value):
@@ -58,35 +58,39 @@ class AnnouncementCreateSerializer(StrictSerializer):
         return _validate_link_url(value)
 
 
-class AnnouncementUpdateSerializer(StrictSerializer):
-    """编辑公告的部分更新字段；至少提供一个可写字段。"""
+class SubmissionCreateSerializer(StrictSerializer):
+    """公告投稿内容；提交后不可改稿、撤回。"""
 
-    title = StrictCharField(min_length=1, max_length=100, required=False)
-    content = StrictCharField(min_length=1, max_length=5000, required=False)
-    time_kind = serializers.ChoiceField(choices=AnnouncementTimeKind.values, required=False)
-    event_at = AwareDateTimeField(required=False)
+    title = StrictCharField(min_length=1, max_length=100)
+    content = StrictCharField(min_length=1, max_length=5000)
+    time_kind = serializers.ChoiceField(choices=AnnouncementTimeKind.values)
+    event_at = AwareDateTimeField()
     link_url = StrictCharField(max_length=500, required=False, allow_null=True)
-    recruitment_id = StrictIntegerField(required=False, allow_null=True, min_value=1)
 
     def validate_link_url(self, value):
         """校验相关链接格式。"""
         return _validate_link_url(value)
 
-    def validate(self, attrs):
-        """拒绝空更新。
 
-        Args:
-            attrs: 已校验字段映射。
+class ClaimIdField(serializers.UUIDField):
+    """审核领取批次在 JSON 请求中以 UUID 字符串传递。"""
 
-        Returns:
-            dict: 含至少一个字段的映射。
+    def to_internal_value(self, data):
+        if not isinstance(data, str):
+            self.fail("invalid")
+        return super().to_internal_value(data)
 
-        Raises:
-            serializers.ValidationError: 未提供任何可写字段。
-        """
-        if not attrs:
-            raise serializers.ValidationError("至少提供一个可写字段")
-        return attrs
+
+class SubmissionClaimSerializer(StrictSerializer):
+    """处理投稿时提交本次领取的批次。"""
+
+    claim_id = ClaimIdField()
+
+
+class SubmissionRejectSerializer(SubmissionClaimSerializer):
+    """驳回投稿需要领取批次和理由。"""
+
+    reason = StrictCharField(min_length=1, max_length=500)
 
 
 class GovernanceDeleteSerializer(StrictSerializer):
@@ -129,9 +133,9 @@ class AnnouncementSerializer(serializers.ModelSerializer):
             dict: uid、nickname、role。
         """
         return {
-            "uid": announcement.author.uid,
+            "uid": announcement.author.public_uid,
             "nickname": announcement.author.nickname,
-            "role": announcement.author.role,
+            "role": announcement.author.public_role,
         }
 
     def get_recruitment_available(self, announcement) -> bool:
@@ -153,6 +157,8 @@ class AnnouncementSerializer(serializers.ModelSerializer):
     def get_permissions(self, announcement) -> dict:
         """输出当前用户的操作入口权限，区分本人删除与治理删除。
 
+        公告不可编辑，can_edit 恒为 false。
+
         Args:
             announcement: 公告实例。
 
@@ -163,7 +169,61 @@ class AnnouncementSerializer(serializers.ModelSerializer):
         is_admin = bool(getattr(user, "is_admin", False))
         is_author = announcement.author_id == user.pk
         return {
-            "can_edit": is_admin and is_author,
+            "can_edit": False,
             "can_delete": is_admin and is_author,
             "can_govern_delete": is_admin,
+        }
+
+
+class SubmissionSerializer(serializers.ModelSerializer):
+    """本人投稿输出：内容、状态、驳回理由与生成公告引用。"""
+
+    class Meta:
+        model = AnnouncementSubmission
+        fields = (
+            "id", "title", "content", "time_kind", "event_at", "link_url",
+            "status", "submitted_at", "reviewed_at", "reject_reason", "announcement_id",
+        )
+        read_only_fields = fields
+
+
+class ClaimedSubmissionSerializer(SubmissionSerializer):
+    """返回当前领取批次和固定的截止时间。"""
+
+    class Meta(SubmissionSerializer.Meta):
+        fields = SubmissionSerializer.Meta.fields + ("claim_id", "claimed_until")
+        read_only_fields = fields
+
+
+class AdminSubmissionSerializer(serializers.ModelSerializer):
+    """待审池输出：投稿人、领取信息与逾期标记。"""
+
+    submitter = serializers.SerializerMethodField()
+    claimed_by = serializers.SerializerMethodField()
+    overdue = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = AnnouncementSubmission
+        fields = (
+            "id", "title", "content", "time_kind", "event_at", "link_url",
+            "submitted_at", "submitter", "claimed_by", "claimed_until", "overdue",
+        )
+        read_only_fields = fields
+
+    def get_submitter(self, submission) -> dict:
+        """投稿人公开信息，仅管理员待审池可见。"""
+        return {
+            "uid": submission.submitter.uid,
+            "nickname": submission.submitter.nickname,
+            "role": submission.submitter.role,
+        }
+
+    def get_claimed_by(self, submission):
+        """当前领取人公开信息；未领取或已交回为 null。"""
+        if submission.claimed_by_id is None:
+            return None
+        return {
+            "uid": submission.claimed_by.uid,
+            "nickname": submission.claimed_by.nickname,
+            "role": submission.claimed_by.role,
         }

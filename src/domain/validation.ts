@@ -6,6 +6,7 @@ export interface CreateJobInput {
   type: JobType;
   title: string;
   description: string;
+  note: string;
   tags: Tag[];
   minHeadcount: number | null;
   maxHeadcount: number | null;
@@ -21,12 +22,21 @@ export interface AnnouncementInput {
   recruitmentId: number | null;
 }
 
+/** 普通用户投稿：不能关联招聘，其余字段与公告一致 */
+export type SubmissionInput = Omit<AnnouncementInput, 'recruitmentId'>;
+
+/** 登录：password 与 code 恰好提供一种（后端二选一） */
 export interface LoginInput {
   email: string;
-  password: string;
+  password?: string;
+  code?: string;
 }
 
-export interface RegisterInput extends LoginInput {
+/** 注册：邮箱验证码通过后提交密码与身份资料 */
+export interface RegisterInput {
+  email: string;
+  password: string;
+  passwordConfirm: string;
   name: string;
   nickname: string;
   role: UserRole;
@@ -47,12 +57,19 @@ export const LIMITS = {
   announcementContent: 5000,
   linkUrl: 500,
   reason: 500,
+  message: 500,
   nickname: 32,
   name: 32,
-  nameMin: 2,
+  nameMin: 1,
   passwordMin: 8,
   passwordMax: 128,
+  codeLength: 6,
+  accountIdMax: 64,
 } as const;
+
+/** 注册验证码 / 登录验证码的有效期与重发间隔（秒）：以接口返回值为准，此处仅作文案兜底 */
+export const CODE_TTL_SECONDS = 300;
+export const CODE_RESEND_SECONDS = 60;
 
 export function extOf(name: string): string {
   const i = name.lastIndexOf('.');
@@ -78,6 +95,17 @@ export function validateNote(note: string): string | null {
   return null;
 }
 
+/** 聊天正文：纯文本，按 Unicode 码点计数，1～500 */
+export function messageLength(text: string): number {
+  return Array.from(text).length;
+}
+
+export function validateMessage(text: string): string | null {
+  if (!text.trim()) return '消息不能为空';
+  if (messageLength(text) > LIMITS.message) return `单条消息不超过 ${LIMITS.message} 个字符`;
+  return null;
+}
+
 /** 发布 / 编辑招聘表单校验 */
 export function validateJobForm(input: CreateJobInput): FieldErrors<CreateJobInput> {
   const errors: FieldErrors<CreateJobInput> = {};
@@ -90,6 +118,8 @@ export function validateJobForm(input: CreateJobInput): FieldErrors<CreateJobInp
   if (!desc) errors.description = '请填写需求描述';
   else if (desc.length > LIMITS.jobDescription)
     errors.description = `需求描述不超过 ${LIMITS.jobDescription} 字`;
+
+  if (input.note.trim().length > LIMITS.note) errors.note = `补充说明不超过 ${LIMITS.note} 字`;
 
   if (!input.tags || input.tags.length === 0) errors.tags = '请至少选择一个相关标签';
 
@@ -117,8 +147,7 @@ export function validateJobForm(input: CreateJobInput): FieldErrors<CreateJobInp
   return errors;
 }
 
-/** 公告发布 / 编辑表单校验 */
-export function validateAnnouncementForm(input: AnnouncementInput): FieldErrors<AnnouncementInput> {
+function validateAnnouncementFields(input: AnnouncementInput | SubmissionInput): FieldErrors<AnnouncementInput> {
   const errors: FieldErrors<AnnouncementInput> = {};
 
   const title = input.title.trim();
@@ -140,11 +169,21 @@ export function validateAnnouncementForm(input: AnnouncementInput): FieldErrors<
     else if (!/^https?:\/\//i.test(link)) errors.linkUrl = '仅支持 http:// 或 https:// 开头的地址';
   }
 
+  return errors;
+}
+
+/** 公告发布表单校验 */
+export function validateAnnouncementForm(input: AnnouncementInput): FieldErrors<AnnouncementInput> {
+  const errors = validateAnnouncementFields(input);
   if (input.recruitmentId != null && (!Number.isInteger(input.recruitmentId) || input.recruitmentId <= 0)) {
     errors.recruitmentId = '关联招聘 ID 不合法';
   }
-
   return errors;
+}
+
+/** 普通用户投稿表单校验（不能关联招聘） */
+export function validateSubmissionForm(input: SubmissionInput): FieldErrors<SubmissionInput> {
+  return validateAnnouncementFields(input) as FieldErrors<SubmissionInput>;
 }
 
 /** 管理员治理删除：原因必填，1～500 字 */
@@ -155,14 +194,20 @@ export function validateModerationReason(reason: string): string | null {
   return null;
 }
 
+/** 公告投稿驳回：理由必填，1～500 字 */
+export function validateRejectReason(reason: string): string | null {
+  const text = reason.trim();
+  if (!text) return '请填写驳回理由';
+  if (text.length > LIMITS.reason) return `驳回理由不超过 ${LIMITS.reason} 字`;
+  return null;
+}
+
 /**
  * 账号只填邮箱前缀，@tongji.edu.cn 为固定后缀。
- * 学校邮箱前缀并不一定等于学号/工号，因此这里不按「纯数字学号」收紧，
- * 只拦截明显非法的字符；后续接入教务/统一身份认证后再补强校验。
+ * 后端以完整邮箱为准（域名精确等于 tongji.edu.cn），这里只挡住明显非法输入，
+ * 不按邮箱前缀字符集或长度额外收紧，避免误伤学校真实账号。
  */
 export const EMAIL_SUFFIX = '@tongji.edu.cn';
-
-const ACCOUNT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/;
 
 /** 允许用户误粘贴完整邮箱：只取 @ 前面的部分 */
 export function normalizeAccountId(raw: string): string {
@@ -178,8 +223,19 @@ export function toTongjiEmail(raw: string): string {
 export function validateAccountId(raw: string): string | null {
   const value = normalizeAccountId(raw);
   if (!value) return '请输入邮箱前缀';
-  if (value.length < 3) return '邮箱前缀至少 3 位';
-  if (!ACCOUNT_ID_RE.test(value)) return '邮箱前缀只能包含字母、数字或 . _ -';
+  if (value.length > LIMITS.accountIdMax) return `邮箱前缀不超过 ${LIMITS.accountIdMax} 位`;
+  if (/\s/.test(value)) return '邮箱前缀不能包含空格';
+  if (value.startsWith('.') || value.endsWith('.')) return '邮箱前缀不能以点开头或结尾';
+  if (/[^A-Za-z0-9._%+-]/.test(value)) return '邮箱前缀只能包含字母、数字或 . _ % + -';
+  return null;
+}
+
+/** 邮箱验证码：6 位数字字符串，保留前导零 */
+export function validateCode(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return '请输入验证码';
+  if (value.length !== LIMITS.codeLength) return `验证码为 ${LIMITS.codeLength} 位数字`;
+  if (!/^\d+$/.test(value)) return `验证码为 ${LIMITS.codeLength} 位数字`;
   return null;
 }
 
@@ -193,22 +249,32 @@ export function validateName(raw: string): string | null {
   return null;
 }
 
-/** 登录表单（邮箱前缀 + 密码，提交前拼成完整邮箱） */
-export interface AccountLoginForm {
+/** 登录密码表单（仅供页面本地校验使用） */
+export interface LoginPasswordForm {
   accountId: string;
   password: string;
 }
 
-/** 注册表单 */
-export interface AccountRegisterForm extends AccountLoginForm {
+/** 登录验证码表单 */
+export interface LoginCodeForm {
+  accountId: string;
+  code: string;
+}
+
+/** 注册表单：验证码通过后再填密码与身份资料 */
+export interface RegisterForm {
+  accountId: string;
+  code: string;
+  password: string;
+  confirm: string;
   name: string;
   nickname: string;
   role: UserRole;
-  confirm: string;
 }
 
-export type AccountLoginErrors = Partial<Record<keyof AccountLoginForm, string>>;
-export type AccountRegisterErrors = Partial<Record<keyof AccountRegisterForm, string>>;
+export type LoginPasswordErrors = Partial<Record<keyof LoginPasswordForm, string>>;
+export type LoginCodeErrors = Partial<Record<keyof LoginCodeForm, string>>;
+export type RegisterErrors = Partial<Record<keyof RegisterForm, string>>;
 
 /**
  * 密码提示文案：前端预校验与后端校验器（Django 密码验证器）共用同一套说法。
@@ -230,7 +296,8 @@ export const PASSWORD_HINT = `至少 ${LIMITS.passwordMin} 位，不能全部为
 
 /** 各字段的简短说明：只补充用户看不出来的信息，不复述标签本身 */
 export const FIELD_HINT = {
-  name: '将展示给招聘发布者',
+  name: '仅用于发布者查看，不对其他用户公开',
+  nickname: '留空则由系统生成「同学_」开头的昵称',
 } as const;
 
 const WEAK_PASSWORDS = new Set([

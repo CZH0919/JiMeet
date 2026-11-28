@@ -137,7 +137,7 @@ class MyApplicationQuerySerializer(ApplicationQuerySerializer):
 class RecruitmentReferenceSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     title = serializers.CharField(read_only=True)
-    type = serializers.CharField(read_only=True)
+    type = serializers.CharField(source="public_type", read_only=True)
     status = serializers.CharField(read_only=True)
     is_deleted = serializers.SerializerMethodField()
     deleted_at = serializers.DateTimeField(read_only=True, allow_null=True)
