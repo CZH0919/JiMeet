@@ -42,5 +42,15 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r backend/requirements/staging.txt
+      - name: Check staging runtime settings
+        run: python manage.py check --settings=config.settings.staging
+        working-directory: backend
+        env:
+          DJANGO_SECRET_KEY: ci-only-staging-settings-validation-not-a-deployment-secret
+          DJANGO_ALLOWED_HOSTS: localhost
+          DB_NAME: jimeet_staging
+          DB_USER: jimeet_staging
+          PRIVATE_FILE_ROOT: /tmp/jimeet-staging-config-check
+          STAGING_LOGIN_IDS: qa01
       - run: python manage.py test --noinput
         working-directory: backend

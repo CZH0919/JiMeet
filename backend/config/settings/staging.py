@@ -19,4 +19,6 @@ SESSION_COOKIE_NAME = "jimeet_staging_session"
 CSRF_COOKIE_NAME = "csrftoken"
 SESSION_COOKIE_SECURE = _env_bool("STAGING_HTTPS", False)
 CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
-EMAIL_BACKEND = "django.core.mail.backends.dummy.EmailBackend"
+# Keep business notifications local while preserving the named registration SMTP
+# channel from base.py. Django disallows legacy EMAIL_BACKEND alongside MAILERS.
+MAILERS = {**MAILERS, "default": {"BACKEND": "django.core.mail.backends.dummy.EmailBackend"}}
