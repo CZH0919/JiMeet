@@ -98,9 +98,9 @@ input[type='password']::-webkit-strong-password-auto-fill-button {
 }
 
 @layer components {
-  /* 页面统一宽度容器 */
+  /* 页面统一宽度容器：所有页面共用同一栏宽，避免跳转时内容左右伸缩 */
   .page-shell {
-    @apply mx-auto w-full max-w-[1180px] px-4 sm:px-6;
+    @apply mx-auto w-full max-w-[1120px] px-4 sm:px-6;
   }
 
   /* 白色卡片：新 UI 的主要容器 */

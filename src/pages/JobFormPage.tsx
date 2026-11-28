@@ -5,7 +5,6 @@ import { clsx } from 'clsx';
 import type { JobType, Tag } from '@/domain/models';
 import { repo } from '@/data';
 import { useAsync } from '@/features/useAsync';
-import { useAuth } from '@/features/useAuth';
 import { fromLocalInputValue, toLocalInputValue } from '@/domain/format';
 import { JOB_TYPE_LABEL } from '@/domain/labels';
 import { LIMITS, validateJobForm, type CreateJobInput, type FieldErrors } from '@/domain/validation';
@@ -15,12 +14,13 @@ import { NumberInput } from '@/components/ui/NumberInput';
 import { ErrorState, InfoBanner, PageLoader } from '@/components/ui/Feedback';
 import { toast } from '@/stores/toast';
 
-const ALL_TYPES: JobType[] = ['competition', 'activity', 'internship'];
+const ALL_TYPES: JobType[] = ['competition', 'activity'];
 
 const EMPTY: CreateJobInput = {
   type: 'competition',
   title: '',
   description: '',
+  note: '',
   tags: [],
   minHeadcount: null,
   maxHeadcount: 5,
@@ -30,7 +30,6 @@ const EMPTY: CreateJobInput = {
 export function JobFormPage() {
   const { id } = useParams<{ id: string }>();
   const isEdit = !!id;
-  const { user } = useAuth();
   const navigate = useNavigate();
 
   const { data: existing, loading, error } = useAsync(
@@ -47,9 +46,11 @@ export function JobFormPage() {
   useEffect(() => {
     if (!existing || initialized) return;
     setForm({
-      type: existing.type,
+      // 历史实验室实习记录对外展示为活动招聘，编辑时按活动类型提交
+      type: existing.type === 'internship' ? 'activity' : existing.type,
       title: existing.title,
       description: existing.description,
+      note: existing.note ?? '',
       tags: existing.tags,
       minHeadcount: existing.minHeadcount,
       maxHeadcount: existing.maxHeadcount,
@@ -97,7 +98,7 @@ export function JobFormPage() {
   };
 
   return (
-    <div className="page-shell max-w-[820px] py-8 sm:py-10">
+    <div className="page-shell py-8 sm:py-10">
       <Link
         to={isEdit ? `/jobs/${id}` : '/jobs'}
         className="mb-4 inline-flex items-center gap-1 text-sm text-ink2 transition-colors hover:text-ink"
@@ -106,15 +107,13 @@ export function JobFormPage() {
       </Link>
 
       <h1 className="text-xl font-bold text-ink">{isEdit ? '编辑招聘' : '发布招聘'}</h1>
-      <p className="mt-1 text-sm text-ink2">
-        填写竞赛组队、活动或实验室实习的用人需求；发布后进入招聘列表，按发布时间倒序排列。
-      </p>
+      <p className="mt-1 text-sm text-ink2">填写竞赛组队或校内活动的招聘信息。</p>
 
       <div className="mt-5">
         <InfoBanner>
           {isEdit
-            ? '仅进行中且未到截止时间的招聘可修改；修改后会通知修改前处于处理中或已接受的申请人。'
-            : '截止时间须晚于当前时间且不超过一年；人数上限为 1–200 人。'}
+            ? '仅进行中且未到截止时间的招聘可修改，修改后会通知相关申请人。'
+            : '截止时间须晚于当前时间且不超过一年，人数上限 1–200 人。'}
         </InfoBanner>
       </div>
 
@@ -149,7 +148,7 @@ export function JobFormPage() {
           />
         </Field>
 
-        <Field label="相关标签" required error={errors.tags} hint="可多选，用于招聘列表筛选">
+        <Field label="相关标签" required error={errors.tags} hint="可多选，用于招聘筛选">
           <div className="flex flex-wrap gap-2">
             {(tags.data ?? []).map((t) => (
               <button
@@ -168,7 +167,7 @@ export function JobFormPage() {
             ))}
             {tags.loading && <span className="text-xs text-muted">加载标签中…</span>}
             {!tags.loading && (tags.data ?? []).length === 0 && (
-              <span className="text-xs text-muted">暂无可用标签，请联系管理员初始化标签。</span>
+              <span className="text-xs text-muted">暂无可用标签，请联系管理员。</span>
             )}
           </div>
         </Field>
@@ -189,6 +188,24 @@ export function JobFormPage() {
           />
           <div className="text-right text-xs text-muted">
             {form.description.length}/{LIMITS.jobDescription}
+          </div>
+        </Field>
+
+        <Field
+          label="补充说明（选填）"
+          error={errors.note}
+          hint={`最多 ${LIMITS.note} 字，展示在招聘详情`}
+        >
+          <Textarea
+            value={form.note}
+            onChange={(e) => set('note', e.target.value)}
+            placeholder="如：面试安排、组队偏好、联系方式等补充信息"
+            invalid={!!errors.note}
+            className="min-h-[100px]"
+            maxLength={LIMITS.note}
+          />
+          <div className="text-right text-xs text-muted">
+            {form.note.length}/{LIMITS.note}
           </div>
         </Field>
 
@@ -233,12 +250,6 @@ export function JobFormPage() {
           </Button>
         </div>
       </div>
-
-      {isEdit && user && (
-        <p className="mt-4 text-center text-xs text-muted">
-          当前账号：{user.name}（{user.role === 'teacher' ? '教师' : '学生'}）· 发布者身份由服务端记录
-        </p>
-      )}
     </div>
   );
 }
