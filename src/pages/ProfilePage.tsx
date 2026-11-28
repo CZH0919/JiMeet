@@ -1,16 +1,28 @@
-import { Briefcase, Download, FileText, Inbox, Pencil, Plus, Send, ShieldCheck, Trash2, Users } from 'lucide-react';
+import {
+  Briefcase,
+  Download,
+  FileText,
+  Inbox,
+  Megaphone,
+  Pencil,
+  Plus,
+  Send,
+  ShieldCheck,
+  Trash2,
+  Users,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import type { Application, Job } from '@/domain/models';
+import type { AnnouncementSubmission, Application, Job } from '@/domain/models';
 import { repo } from '@/data';
 import { fetchAllPages } from '@/data/fetchAll';
 import { useAsync } from '@/features/useAsync';
 import { useAuth } from '@/features/useAuth';
 import { formatDate, formatDateTime } from '@/domain/format';
-import { APPLICATION_STATUS_LABEL, ROLE_LABEL } from '@/domain/labels';
+import { APPLICATION_STATUS_LABEL, ROLE_LABEL, TIME_KIND_LABEL } from '@/domain/labels';
 import { validateNickname } from '@/domain/validation';
-import { ApplicationStatusBadge, JobStatusBadge } from '@/components/ui/StatusBadge';
+import { ApplicationStatusBadge, JobStatusBadge, SubmissionStatusBadge } from '@/components/ui/StatusBadge';
 import { QuotaProgress } from '@/components/job/QuotaProgress';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -21,12 +33,13 @@ import { ResumePreview } from '@/components/application/ResumePreview';
 import { EmptyState, ErrorState, PageLoader } from '@/components/ui/Feedback';
 import { toast } from '@/stores/toast';
 
-type Tab = 'mine' | 'received' | 'applications';
+type Tab = 'mine' | 'received' | 'applications' | 'submissions';
 
 const TABS: { key: Tab; label: string; icon: typeof Briefcase }[] = [
   { key: 'mine', label: '我发布的招聘', icon: Briefcase },
   { key: 'received', label: '收到的申请', icon: Inbox },
   { key: 'applications', label: '我提交的申请', icon: Send },
+  { key: 'submissions', label: '我的投稿', icon: Megaphone },
 ];
 
 export function ProfilePage() {
@@ -34,7 +47,9 @@ export function ProfilePage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const tab = (params.get('tab') as Tab | null) ?? 'mine';
-  const setTab = (next: Tab) => setParams(next === 'mine' ? {} : { tab: next }, { replace: true });
+  const highlight = params.get('highlight');
+  const setTab = (next: Tab) =>
+    setParams(next === 'mine' ? {} : { tab: next }, { replace: true });
 
   const myJobs = useAsync(
     () => fetchAllPages((p, s) => repo.jobs.listMine({ type: 'all', page: p, pageSize: s })),
@@ -43,6 +58,13 @@ export function ProfilePage() {
   const myApps = useAsync(
     () => fetchAllPages((p, s) => repo.applications.listMine({ page: p, pageSize: s })),
     [user?.id],
+  );
+  const mySubmissions = useAsync(
+    () =>
+      tab === 'submissions'
+        ? fetchAllPages((p, s) => repo.announcements.listMineSubmissions({ page: p, pageSize: s }))
+        : Promise.resolve([] as AnnouncementSubmission[]),
+    [tab, user?.id],
   );
 
   // 收到的待处理申请：聚合本人每条招聘下的 processing 申请（后端无跨招聘聚合接口）
@@ -114,7 +136,7 @@ export function ProfilePage() {
   };
 
   return (
-    <div className="page-shell max-w-[1000px] py-8 sm:py-10">
+    <div className="page-shell py-8 sm:py-10">
       {/* 个人信息卡 */}
       <section className="panel flex flex-col gap-5 px-6 py-6 sm:flex-row sm:items-center">
         <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-primary-soft text-2xl font-semibold text-primary">
@@ -142,7 +164,10 @@ export function ProfilePage() {
               <Pencil size={12} /> 修改昵称
             </button>
           </div>
-          <p className="mt-1 truncate text-sm text-ink2">{user.email}</p>
+          <p className="mt-1 flex flex-wrap items-center gap-x-3 text-sm text-ink2">
+            {user.realName && <span>姓名 {user.realName}</span>}
+            <span className="truncate">{user.email}</span>
+          </p>
         </div>
         <Button className="shrink-0" onClick={() => navigate('/jobs/new')}>
           <Plus size={15} /> 发布招聘
@@ -153,7 +178,7 @@ export function ProfilePage() {
       {!user.privacyConsented && (
         <div className="mt-4 flex flex-col gap-3 rounded-lg border border-warning/30 bg-warning-soft px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm leading-relaxed text-ink2">
-            确认《个人信息处理告知》后才能投递简历。
+            确认《个人信息处理告知》后方可投递简历。
           </p>
           <Button
             size="sm"
@@ -243,6 +268,16 @@ export function ProfilePage() {
             reload={myApps.reload}
           />
         )}
+
+        {tab === 'submissions' && (
+          <MySubmissionsTab
+            loading={mySubmissions.loading}
+            error={mySubmissions.error}
+            items={mySubmissions.data ?? []}
+            highlightId={highlight}
+            reload={mySubmissions.reload}
+          />
+        )}
       </div>
 
       <ConfirmDialog
@@ -330,7 +365,7 @@ function MineJobsTab({
   reload: () => void;
 }) {
   const navigate = useNavigate();
-  const [deleteTarget, setDeleteTarget] = useState<Job | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ job: Job; affected: number } | null>(null);
   const [busy, setBusy] = useState(false);
 
   if (loading) return <PageLoader />;
@@ -348,11 +383,25 @@ function MineJobsTab({
     );
   }
 
+  const askDelete = async (job: Job) => {
+    // 列表摘要不含申请计数，删除前取详情以便提示受影响范围
+    try {
+      const detail = await repo.jobs.detail(job.id);
+      const counts = detail.applicationCounts;
+      setDeleteTarget({
+        job,
+        affected: (counts?.processing ?? 0) + (counts?.accepted ?? 0),
+      });
+    } catch {
+      setDeleteTarget({ job, affected: 0 });
+    }
+  };
+
   const doDelete = async () => {
     if (!deleteTarget) return;
     setBusy(true);
     try {
-      await repo.jobs.remove(deleteTarget.id);
+      await repo.jobs.remove(deleteTarget.job.id);
       toast.success('招聘已删除，相关申请已失效');
       setDeleteTarget(null);
       reload();
@@ -365,7 +414,7 @@ function MineJobsTab({
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-xs text-ink2">进行中的招聘可编辑或删除；删除会使相关申请失效。</p>
+      <p className="text-xs text-ink2">进行中的招聘可编辑或删除。</p>
       {jobs.map((job) => (
         <div key={job.id} className="panel flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
           <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -412,7 +461,7 @@ function MineJobsTab({
               </Button>
             )}
             {job.status === 'open' && (
-              <Button size="sm" variant="danger-outline" onClick={() => setDeleteTarget(job)}>
+              <Button size="sm" variant="danger-outline" onClick={() => void askDelete(job)}>
                 <Trash2 size={14} /> 删除
               </Button>
             )}
@@ -423,7 +472,11 @@ function MineJobsTab({
       <ConfirmDialog
         open={!!deleteTarget}
         title="删除招聘"
-        description={`删除「${deleteTarget?.title}」不可恢复：处理中与已接受的申请将转为已失效，相关申请人会收到站内通知。`}
+        description={
+          (deleteTarget?.affected ?? 0) > 0
+            ? `删除「${deleteTarget?.job.title}」不可恢复：当前有 ${deleteTarget?.affected} 份处理中/已接受的申请将转为已失效并通知申请人；已拒绝与已撤回记录保持原状态。`
+            : `删除「${deleteTarget?.job.title}」不可恢复：招聘从列表移除，不能继续投递或处理申请。`
+        }
         confirmText="确认删除"
         loading={busy}
         onConfirm={doDelete}
@@ -541,7 +594,7 @@ function MyApplicationsTab({
               {app.decidedAt && ` · 处理于 ${formatDateTime(app.decidedAt)}`}
             </p>
             {app.status === 'invalid' && (
-              <p className="mt-1 text-xs text-muted">该招聘已被删除，申请已失效；你仍可在线上查看或下载本人简历。</p>
+              <p className="mt-1 text-xs text-muted">招聘已删除，申请已失效；仍可查看或下载本人简历。</p>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -579,6 +632,79 @@ function MyApplicationsTab({
               <span className="text-xs text-muted">{APPLICATION_STATUS_LABEL[app.status]}</span>
             )}
           </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* -------------------------------- 我的投稿 -------------------------------- */
+
+function MySubmissionsTab({
+  loading,
+  error,
+  items,
+  highlightId,
+  reload,
+}: {
+  loading: boolean;
+  error: string | null;
+  items: AnnouncementSubmission[];
+  highlightId: string | null;
+  reload: () => void;
+}) {
+  if (loading) return <PageLoader />;
+  if (error) return <ErrorState message={error} onRetry={reload} />;
+  if (items.length === 0) {
+    return (
+      <EmptyState
+        title="你还没有投稿过公告"
+        description="投稿需管理员审核，通过后展示在首页。"
+        action={
+          <Link to="/announcements/new">
+            <Button size="sm">去投稿</Button>
+          </Link>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-xs text-ink2">提交后不可改稿或撤回；驳回会附管理员填写的理由。</p>
+      {items.map((s) => (
+        <div
+          key={s.id}
+          className={clsx(
+            'panel flex flex-col gap-2 px-5 py-4',
+            highlightId === s.id && 'ring-2 ring-primary/35',
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-ink">{s.title}</span>
+            <SubmissionStatusBadge status={s.status} />
+            <span className="text-xs text-ink2">
+              {TIME_KIND_LABEL[s.timeKind]} {formatDateTime(s.eventAt)}
+            </span>
+          </div>
+          <p className="line-clamp-2 text-xs leading-relaxed text-muted">{s.content}</p>
+          <p className="text-xs text-ink2">
+            提交于 {formatDateTime(s.submittedAt)}
+            {s.reviewedAt && ` · 审核于 ${formatDateTime(s.reviewedAt)}`}
+          </p>
+          {s.status === 'rejected' && s.rejectReason && (
+            <p className="rounded-md bg-danger-soft px-3.5 py-2.5 text-xs leading-relaxed text-danger">
+              驳回理由：{s.rejectReason}
+            </p>
+          )}
+          {s.status === 'approved' && s.announcementId && (
+            <Link
+              to={`/announcements/${s.announcementId}`}
+              className="text-xs font-medium text-primary hover:underline"
+            >
+              查看已发布的公告
+            </Link>
+          )}
         </div>
       ))}
     </div>

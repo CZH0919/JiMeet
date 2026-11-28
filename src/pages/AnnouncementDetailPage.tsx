@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, Megaphone, PenLine, ShieldAlert, Trash2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Megaphone, ShieldAlert, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { repo } from '@/data';
@@ -65,7 +65,7 @@ export function AnnouncementDetailPage() {
   };
 
   return (
-    <div className="page-shell max-w-[900px] py-8 sm:py-10">
+    <div className="page-shell py-8 sm:py-10">
       <Link
         to="/"
         className="mb-4 inline-flex items-center gap-1 text-sm text-ink2 transition-colors hover:text-ink"
@@ -95,13 +95,8 @@ export function AnnouncementDetailPage() {
             </div>
           </div>
 
-          {user?.isAdmin && can.editAnnouncement(user, item) && (
+          {item.permissions.canDelete && (
             <div className="flex shrink-0 items-center gap-2">
-              <Link to={`/announcements/${item.id}/edit`}>
-                <Button size="sm" variant="secondary">
-                  <PenLine size={14} /> 编辑
-                </Button>
-              </Link>
               <Button size="sm" variant="danger-outline" onClick={() => setDeleteOpen(true)}>
                 <Trash2 size={14} /> 删除
               </Button>

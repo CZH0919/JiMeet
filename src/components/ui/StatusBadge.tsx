@@ -1,10 +1,12 @@
 import { clsx } from 'clsx';
-import type { ApplicationStatus, JobStatus } from '@/domain/models';
+import type { ApplicationStatus, JobStatus, SubmissionStatus } from '@/domain/models';
 import {
   APPLICATION_STATUS_LABEL,
   APPLICATION_STATUS_TONE,
   JOB_STATUS_LABEL,
   JOB_STATUS_TONE,
+  SUBMISSION_STATUS_LABEL,
+  SUBMISSION_STATUS_TONE,
 } from '@/domain/labels';
 
 const toneClass: Record<string, string> = {
@@ -37,6 +39,19 @@ export function ApplicationStatusBadge({ status }: { status: ApplicationStatus }
       )}
     >
       {APPLICATION_STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+export function SubmissionStatusBadge({ status }: { status: SubmissionStatus }) {
+  return (
+    <span
+      className={clsx(
+        'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
+        toneClass[SUBMISSION_STATUS_TONE[status]],
+      )}
+    >
+      {SUBMISSION_STATUS_LABEL[status]}
     </span>
   );
 }

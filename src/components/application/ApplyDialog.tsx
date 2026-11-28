@@ -95,7 +95,7 @@ export function ApplyDialog({ job, open, onClose, onSubmitted }: ApplyDialogProp
     >
       <div className="flex flex-col gap-5">
         <p className="rounded-md bg-page px-3.5 py-2.5 text-xs leading-relaxed text-ink2">
-          同一招聘不可重复投递；撤回后可重新申请。
+          同一招聘仅保留一份有效申请，撤回后可重新投递。
         </p>
 
         <Field label="简历文件" required>
@@ -123,7 +123,7 @@ export function ApplyDialog({ job, open, onClose, onSubmitted }: ApplyDialogProp
               className="mt-0.5"
             />
             <span>
-              我已阅读并同意《个人信息处理告知》，同意平台为本次申请处理我的简历信息。
+              我已阅读并同意《个人信息处理告知》，同意平台处理本次申请的简历信息。
             </span>
           </label>
         )}

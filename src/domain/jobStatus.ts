@@ -22,6 +22,9 @@ export function canApply(job: Job, user: User | null): ApplyDecision {
   if (isExpired(job)) return { ok: false, reason: '该招聘已过截止时间' };
   if (job.publisher.id === user.id) return { ok: false, reason: '不可申请本人发布的招聘' };
   if (!user.privacyConsented) return { ok: false, reason: '请先确认个人信息处理告知' };
-  if (job.myApplicationStatus) return { ok: false, reason: '你已申请过该招聘，不可重复申请' };
+  // 撤回后可以重新申请，因此只有处理中/已接受/已拒绝会阻止再次投递
+  if (job.myApplicationStatus && job.myApplicationStatus !== 'withdrawn') {
+    return { ok: false, reason: '你已申请过该招聘，不可重复申请' };
+  }
   return { ok: true };
 }

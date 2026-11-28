@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, FileText, Minus, RotateCcw, X } from 'lucide-react';
+import { ArrowLeft, Check, FileText, MessageSquare, Minus, RotateCcw, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
@@ -102,7 +102,7 @@ export function JobApplicationsPage() {
   };
 
   return (
-    <div className="page-shell max-w-[1000px] py-8 sm:py-10">
+    <div className="page-shell py-8 sm:py-10">
       <Link
         to={`/jobs/${id}`}
         className="mb-4 inline-flex items-center gap-1 text-sm text-ink2 transition-colors hover:text-ink"
@@ -119,7 +119,7 @@ export function JobApplicationsPage() {
 
       <div className="mt-4">
         <InfoBanner>
-          查看简历后可直接处理；确认与拒绝不可撤销，并会通知申请人；暂留仅发布者可见。
+          确认与拒绝不可撤销并通知申请人；暂留仅发布者可见。
           {full && ' 当前已满员，无法再确认新的申请。'}
         </InfoBanner>
       </div>
@@ -237,7 +237,7 @@ export function JobApplicationsPage() {
                     </p>
                   </div>
                 ) : (
-                  <p className="text-xs text-muted">申请人未填写补充说明。</p>
+                  <p className="text-xs text-muted">未填写补充说明。</p>
                 )}
               </>
             )}
@@ -267,7 +267,16 @@ function ApplicationRow({ app, onOpen }: { app: Application; onOpen: () => void 
     <div className="panel flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-ink">{app.applicant.name}</span>
+          {app.applicant.id ? (
+            <Link
+              to={`/users/${app.applicant.id}?application_id=${app.id}`}
+              className="text-sm font-semibold text-ink hover:text-primary"
+            >
+              {app.applicant.name}
+            </Link>
+          ) : (
+            <span className="text-sm font-semibold text-ink">{app.applicant.name}</span>
+          )}
           <span className="rounded-full bg-muted-soft px-2 py-0.5 text-xs text-ink2">
             {ROLE_LABEL[app.applicant.role]}
           </span>
@@ -291,6 +300,13 @@ function ApplicationRow({ app, onOpen }: { app: Application; onOpen: () => void 
         <Button size="sm" variant="secondary" onClick={onOpen}>
           <FileText size={14} /> 查看简历
         </Button>
+        {app.applicant.id && (
+          <Link to={`/users/${app.applicant.id}?application_id=${app.id}`}>
+            <Button size="sm" variant="ghost">
+              <MessageSquare size={14} /> 联系申请人
+            </Button>
+          </Link>
+        )}
       </div>
     </div>
   );

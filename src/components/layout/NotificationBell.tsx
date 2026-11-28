@@ -19,10 +19,13 @@ interface Props {
 function iconOf(type: NotificationType) {
   switch (type) {
     case 'application_accepted':
+    case 'announcement_submission_approved':
       return { Icon: CheckCircle2, tone: 'bg-success-soft text-success' };
     case 'application_rejected':
+    case 'announcement_submission_rejected':
       return { Icon: XCircle, tone: 'bg-danger-soft text-danger' };
     case 'announcement_admin_removed':
+    case 'announcement_removed':
     case 'admin_removed':
     case 'recruitment_deleted':
       return { Icon: ShieldAlert, tone: 'bg-danger-soft text-danger' };
@@ -36,9 +39,20 @@ function iconOf(type: NotificationType) {
 
 /** 站内通知的跳转目标：目标已删除时不跳转，只提示 */
 function targetOf(n: Notification): string | null {
+  if (n.type === 'announcement_submission_rejected') return '/me?tab=submissions';
   if (n.announcementId) return `/announcements/${n.announcementId}`;
-  if (n.jobId) return `/jobs/${n.jobId}`;
+
+  // 发布者侧的申请事件去「收到的申请」，申请人侧的结果去「我提交的申请」
+  const publisherSide =
+    n.type === 'application_submitted' ||
+    n.type === 'application_updated' ||
+    n.type === 'application_withdrawn' ||
+    n.type === 'anonymous_withdrawal' ||
+    n.type === 'recruitment_closed' ||
+    n.type === 'recruitment_deleted';
+  if (publisherSide) return '/me?tab=received';
   if (n.applicationId) return '/me?tab=applications';
+  if (n.jobId) return `/jobs/${n.jobId}`;
   return null;
 }
 

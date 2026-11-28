@@ -1,10 +1,12 @@
-import { ChevronDown, LogOut, Plus, ShieldAlert, UserRound } from 'lucide-react';
+import { ChevronDown, LogOut, Plus, ShieldAlert, ShieldCheck, UserRound, UserX } from 'lucide-react';
 import { useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { ROLE_LABEL } from '@/domain/labels';
 import { useAuth } from '@/features/useAuth';
 import { useUnreadCount } from '@/features/useNotifications';
+import { usePendingSubmissionCount } from '@/features/useSubmissionReview';
+import { CancelAccountDialog } from '@/components/account/CancelAccountDialog';
 import { Logo } from './Logo';
 import { NotificationBell } from './NotificationBell';
 
@@ -19,7 +21,9 @@ const NAV = [
 export function AppHeader() {
   const { user, logout } = useAuth();
   const { count: unread, refresh: refreshUnread } = useUnreadCount();
+  const pending = usePendingSubmissionCount();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -123,6 +127,18 @@ export function AppHeader() {
                     {user.isAdmin && (
                       <div className="mt-1 border-t border-line pt-1">
                         <Link
+                          to="/admin?tab=review"
+                          onClick={() => setMenuOpen(false)}
+                          className="flex items-center gap-2 px-4 py-2.5 text-sm text-danger hover:bg-danger-soft"
+                        >
+                          <ShieldCheck size={16} /> 公告审核工作台
+                          {pending.count > 0 && (
+                            <span className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-none text-white">
+                              {pending.count > 99 ? '99+' : pending.count}
+                            </span>
+                          )}
+                        </Link>
+                        <Link
                           to="/admin"
                           onClick={() => setMenuOpen(false)}
                           className="flex items-center gap-2 px-4 py-2.5 text-sm text-danger hover:bg-danger-soft"
@@ -139,6 +155,15 @@ export function AppHeader() {
                       >
                         <LogOut size={16} /> 退出登录
                       </button>
+                      <button
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setCancelOpen(true);
+                        }}
+                        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-danger hover:bg-danger-soft"
+                      >
+                        <UserX size={16} /> 注销账号
+                      </button>
                     </div>
                   </div>
                 </>
@@ -154,6 +179,8 @@ export function AppHeader() {
           )}
         </div>
       </div>
+
+      <CancelAccountDialog open={cancelOpen} onClose={() => setCancelOpen(false)} />
     </header>
   );
 }

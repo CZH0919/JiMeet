@@ -2,6 +2,7 @@ import {
   ArrowLeft,
   CalendarClock,
   Clock3,
+  MessageSquare,
   Pencil,
   ShieldAlert,
   Trash2,
@@ -43,6 +44,7 @@ export function JobDetailPage() {
   const [reason, setReason] = useState('');
   const [reasonErr, setReasonErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [contacting, setContacting] = useState(false);
 
   const decision = useMemo(() => (job ? canApply(job, user) : { ok: false, reason: '' }), [job, user]);
 
@@ -54,7 +56,12 @@ export function JobDetailPage() {
   const privacyBlock =
     job.permissions?.applyBlockedCode === PRIVACY_NOT_CONSENTED && job.status === 'open' && !isExpired(job);
   const applyOk = job.permissions ? job.permissions.canApply || privacyBlock : decision.ok;
-  const applyReason = job.permissions?.applyBlockedReason || (decision.ok ? '' : decision.reason);
+  const applyReason =
+    job.status === 'full'
+      ? '该招聘已满员'
+      : job.status === 'closed'
+        ? '该招聘已关闭'
+        : job.permissions?.applyBlockedReason || (decision.ok ? '' : decision.reason);
 
   const canEdit = job.permissions ? job.permissions.canEdit : can.editJob(user, job);
   const canDeleteOwn = job.permissions ? job.permissions.canDelete : can.deleteJob(user, job);
@@ -62,6 +69,23 @@ export function JobDetailPage() {
   const canViewApps = job.permissions ? job.permissions.canViewApplications : can.manageApps(user, job);
   const canGovern = job.permissions?.canGovernDelete ?? false;
   const isPublisher = !!user && user.id === job.publisher.id;
+  const canContact = !!user && !!job.publisher.id && !isPublisher;
+  // 删除提示需说明受影响范围：处理中 + 已接受会转为已失效
+  const affectedApplications =
+    (job.applicationCounts?.processing ?? 0) + (job.applicationCounts?.accepted ?? 0);
+
+  const contactPublisher = async () => {
+    if (!job.publisher.id) return;
+    setContacting(true);
+    try {
+      const conversation = await repo.messages.openWith(job.publisher.id, { recruitmentId: job.id });
+      navigate(`/messages/${conversation.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '无法发起聊天');
+    } finally {
+      setContacting(false);
+    }
+  };
 
   const doClose = async () => {
     setBusy(true);
@@ -109,7 +133,7 @@ export function JobDetailPage() {
   };
 
   return (
-    <div className="page-shell max-w-[1100px] py-8 sm:py-10">
+    <div className="page-shell py-8 sm:py-10">
       <Link
         to="/jobs"
         className="mb-4 inline-flex items-center gap-1 text-sm text-ink2 transition-colors hover:text-ink"
@@ -161,9 +185,16 @@ export function JobDetailPage() {
           </div>
 
           <section className="mt-7">
-            <h2 className="text-base font-semibold text-ink">需求与补充说明</h2>
+            <h2 className="text-base font-semibold text-ink">需求描述</h2>
             <p className="mt-3 whitespace-pre-wrap text-[15px] leading-8 text-ink2">{job.description}</p>
           </section>
+
+          {job.note && (
+            <section className="mt-6 rounded-md border border-line bg-page px-5 py-4">
+              <h2 className="text-sm font-semibold text-ink">发布者补充说明</h2>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-ink2">{job.note}</p>
+            </section>
+          )}
         </article>
 
         {/* 侧栏 */}
@@ -174,9 +205,18 @@ export function JobDetailPage() {
                 {job.publisher.name.slice(0, 1)}
               </span>
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-ink">{job.publisher.name}</p>
+                {job.publisher.id ? (
+                  <Link
+                    to={`/users/${job.publisher.id}?recruitment_id=${job.id}`}
+                    className="block truncate text-sm font-semibold text-ink hover:text-primary"
+                  >
+                    {job.publisher.name}
+                  </Link>
+                ) : (
+                  <p className="truncate text-sm font-semibold text-ink">{job.publisher.name}</p>
+                )}
                 <p className="mt-0.5 flex items-center gap-1 text-xs text-ink2">
-                  <UserRound size={12} /> {ROLE_LABEL[job.publisher.role]}
+                  <UserRound size={12} /> {job.publisher.id ? ROLE_LABEL[job.publisher.role] : '账号已注销'}
                 </p>
               </div>
             </div>
@@ -185,8 +225,21 @@ export function JobDetailPage() {
               <QuotaProgress accepted={job.acceptedCount} total={job.maxHeadcount} />
             </div>
 
+            {canContact && (
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <Link to={`/users/${job.publisher.id}?recruitment_id=${job.id}`}>
+                  <Button variant="secondary" className="w-full">
+                    个人主页
+                  </Button>
+                </Link>
+                <Button variant="secondary" className="w-full" loading={contacting} onClick={contactPublisher}>
+                  <MessageSquare size={15} /> 聊一聊
+                </Button>
+              </div>
+            )}
+
             <div className="mt-5 border-t border-line pt-5">
-              {job.myApplicationStatus ? (
+              {job.myApplicationStatus && job.myApplicationStatus !== 'withdrawn' ? (
                 <div className="rounded-md bg-primary-soft px-4 py-3 text-sm text-primary">
                   你已申请该招聘 · 当前状态「{APPLICATION_STATUS_LABEL[job.myApplicationStatus]}」
                   <Link
@@ -243,7 +296,7 @@ export function JobDetailPage() {
                   </Button>
                 )}
                 {!canEdit && !canClose && !canDeleteOwn && (
-                  <p className="text-xs leading-relaxed text-muted">该招聘已结束，不可再编辑或关闭。</p>
+                  <p className="text-xs leading-relaxed text-muted">招聘已结束，不可编辑或关闭。</p>
                 )}
               </div>
             </div>
@@ -258,7 +311,7 @@ export function JobDetailPage() {
             <ShieldAlert size={16} /> 内容治理
           </h2>
           <p className="mt-1 text-xs leading-relaxed text-ink2">
-            删除不合规内容需填写原因并记入审计日志；受影响申请将失效并通知申请人。
+            删除需填写原因并记入审计日志，受影响申请将失效。
           </p>
           <Button variant="danger" size="sm" className="mt-3" onClick={() => setGovernOpen(true)}>
             <Trash2 size={14} /> 删除该招聘
@@ -282,7 +335,11 @@ export function JobDetailPage() {
       <ConfirmDialog
         open={deleteOpen}
         title="删除招聘"
-        description={`删除「${job.title}」不可恢复：处理中与已接受的申请将转为已失效并通知申请人，发布者将失去简历访问权限。`}
+        description={
+          affectedApplications > 0
+            ? `删除「${job.title}」不可恢复：当前有 ${affectedApplications} 份处理中/已接受的申请将转为已失效并通知申请人，发布者将失去这些简历的访问权限；已拒绝与已撤回记录保持原状态。`
+            : `删除「${job.title}」不可恢复：招聘将从列表移除，不能继续投递或处理申请。`
+        }
         confirmText="确认删除"
         loading={busy}
         onConfirm={doDelete}
